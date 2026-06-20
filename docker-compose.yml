@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: statusflow
     ports:
-      - "5432:5432"
+      # Host 5433 to avoid clashing with other local Postgres instances.
+      # The DSN in .env.example matches this.
+      - "5433:5432"
     volumes:
       - statusflow_pgdata:/var/lib/postgresql/data
     healthcheck:
