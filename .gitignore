@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.env.local
+
+# Go
+bin/
+*.test
+*.out
+vendor/
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+web/.turbo/
+web/next-env.d.ts
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/

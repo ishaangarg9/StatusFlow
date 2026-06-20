@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    container_name: statusflow-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: statusflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - statusflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d statusflow"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  statusflow_pgdata:

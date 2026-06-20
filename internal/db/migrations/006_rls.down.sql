@@ -1,0 +1,21 @@
+DROP POLICY IF EXISTS audit_logs_isolation           ON audit_logs;
+DROP POLICY IF EXISTS status_page_monitors_isolation ON status_page_monitors;
+DROP POLICY IF EXISTS status_pages_isolation         ON status_pages;
+DROP POLICY IF EXISTS incident_updates_isolation     ON incident_updates;
+DROP POLICY IF EXISTS incidents_isolation            ON incidents;
+DROP POLICY IF EXISTS check_results_isolation        ON check_results;
+DROP POLICY IF EXISTS monitors_isolation             ON monitors;
+DROP POLICY IF EXISTS invitations_isolation          ON invitations;
+DROP POLICY IF EXISTS memberships_isolation          ON memberships;
+DROP POLICY IF EXISTS organizations_isolation        ON organizations;
+
+ALTER TABLE audit_logs           DISABLE ROW LEVEL SECURITY;
+ALTER TABLE status_page_monitors DISABLE ROW LEVEL SECURITY;
+ALTER TABLE status_pages         DISABLE ROW LEVEL SECURITY;
+ALTER TABLE incident_updates     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE incidents            DISABLE ROW LEVEL SECURITY;
+ALTER TABLE check_results        DISABLE ROW LEVEL SECURITY;
+ALTER TABLE monitors             DISABLE ROW LEVEL SECURITY;
+ALTER TABLE invitations          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE memberships          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE organizations        DISABLE ROW LEVEL SECURITY;
