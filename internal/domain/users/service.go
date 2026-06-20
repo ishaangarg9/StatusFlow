@@ -1,15 +1,226 @@
 package users
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
 
-// Service holds the dependencies the users domain needs.
-//
-// Implementation outline (see CLAUDE.md §5 recipe):
-//   - Signup: validate email/password -> HashPassword -> INSERT user (handles unique violation -> 409).
-//   - Login: SELECT by email -> VerifyPassword -> SessionStore.Create -> SetCookie.
-//   - These touch only global tables (users, sessions), so no WithOrgTx is needed.
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ishaangarg9/statusflow/internal/auth"
+	"github.com/ishaangarg9/statusflow/internal/shared"
+)
+
+// Service owns the auth domain. users + sessions are global tables (no RLS),
+// so every query here runs on the bare pool — no WithOrgTx.
 type Service struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	sessions *auth.SessionStore
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool, sessions *auth.SessionStore) *Service {
+	return &Service{pool: pool, sessions: sessions}
+}
+
+// --- View types (the wire shape; safe to JSON-marshal) -------------------
+
+type UserView struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+	Name  *string   `json:"name,omitempty"`
+}
+
+type SessionView struct {
+	ID        uuid.UUID `json:"id"`
+	Current   bool      `json:"current"`
+	UserAgent *string   `json:"userAgent,omitempty"`
+	IP        *string   `json:"ip,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// --- Inputs --------------------------------------------------------------
+
+type SignupInput struct {
+	Email    string
+	Password string
+	Name     string
+}
+
+type LoginInput struct {
+	Email    string
+	Password string
+	UA       string
+	IP       string
+}
+
+// --- Operations ----------------------------------------------------------
+
+// Signup creates a user. argon2id hash via auth.HashPassword. Returns 409 if
+// the email is already registered (unique violation on the email column).
+func (s *Service) Signup(ctx context.Context, in SignupInput) (*UserView, error) {
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	if err := validateEmail(email); err != nil {
+		return nil, err
+	}
+	if err := validatePassword(in.Password); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(in.Name)
+
+	hash, err := auth.HashPassword(in.Password)
+	if err != nil {
+		return nil, shared.Internal(err)
+	}
+
+	var u UserView
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO users (email, password_hash, name)
+		VALUES ($1, $2, NULLIF($3, ''))
+		RETURNING id, email, name`,
+		email, hash, name,
+	).Scan(&u.ID, &u.Email, &u.Name)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, shared.Conflict("Email is already registered.")
+		}
+		return nil, shared.Internal(err)
+	}
+	return &u, nil
+}
+
+// Login verifies credentials and mints a session. Any failure path returns a
+// generic 401 — never reveal whether the email exists or which field was wrong.
+func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ *UserView, _ error) {
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	if email == "" || in.Password == "" {
+		return "", nil, shared.Unauthorized()
+	}
+	var (
+		id    uuid.UUID
+		em    string
+		name  *string
+		hash  string
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, email, name, password_hash FROM users WHERE email = $1`, email,
+	).Scan(&id, &em, &name, &hash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, shared.Unauthorized()
+		}
+		return "", nil, shared.Internal(err)
+	}
+	ok, err := auth.VerifyPassword(hash, in.Password)
+	if err != nil || !ok {
+		return "", nil, shared.Unauthorized()
+	}
+	raw, _, err := s.sessions.Create(ctx, id, in.UA, in.IP)
+	if err != nil {
+		return "", nil, shared.Internal(err)
+	}
+	return raw, &UserView{ID: id, Email: em, Name: name}, nil
+}
+
+// Logout revokes a specific session. The handler clears the cookie.
+func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
+	if err := s.sessions.Revoke(ctx, sessionID); err != nil {
+		return shared.Internal(err)
+	}
+	return nil
+}
+
+// LogoutAll revokes every session for the user (kill-switch / stolen-cookie path).
+func (s *Service) LogoutAll(ctx context.Context, userID uuid.UUID) error {
+	if err := s.sessions.RevokeAllForUser(ctx, userID); err != nil {
+		return shared.Internal(err)
+	}
+	return nil
+}
+
+// Me returns the current user. Listing the user's memberships across orgs
+// requires a cross-tenant read that the strict app_user role cannot do via
+// the memberships table alone (RLS would scope it to a single org). That
+// will be added later via a SECURITY DEFINER fn — for now the handler
+// returns an empty memberships array.
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*UserView, error) {
+	var u UserView
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, email, name FROM users WHERE id = $1`, userID,
+	).Scan(&u.ID, &u.Email, &u.Name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, shared.Unauthorized()
+		}
+		return nil, shared.Internal(err)
+	}
+	return &u, nil
+}
+
+// ListSessions returns every active session for the user, flagging which one
+// is the current request's cookie so the UI can render "this device".
+func (s *Service) ListSessions(ctx context.Context, userID, currentSessionID uuid.UUID) ([]SessionView, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_agent, ip::text, created_at, expires_at
+		FROM sessions
+		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, shared.Internal(err)
+	}
+	defer rows.Close()
+	out := []SessionView{}
+	for rows.Next() {
+		var v SessionView
+		if err := rows.Scan(&v.ID, &v.UserAgent, &v.IP, &v.CreatedAt, &v.ExpiresAt); err != nil {
+			return nil, shared.Internal(err)
+		}
+		v.Current = v.ID == currentSessionID
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, shared.Internal(err)
+	}
+	return out, nil
+}
+
+// RevokeSession revokes a session that BELONGS TO the caller. We scope by
+// user_id in the WHERE clause so a user can't revoke someone else's session
+// even by guessing an id; the absent row returns 404.
+func (s *Service) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	cmd, err := s.pool.Exec(ctx, `
+		UPDATE sessions SET revoked_at = now()
+		WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+		sessionID, userID)
+	if err != nil {
+		return shared.Internal(err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return shared.NotFound()
+	}
+	return nil
+}
+
+// --- Input validation ----------------------------------------------------
+
+func validateEmail(s string) error {
+	if s == "" || len(s) > 254 || !strings.Contains(s, "@") {
+		return shared.Validation("Invalid email.")
+	}
+	return nil
+}
+
+func validatePassword(s string) error {
+	if len(s) < 8 {
+		return shared.Validation("Password must be at least 8 characters.")
+	}
+	if len(s) > 1024 {
+		return shared.Validation("Password too long.")
+	}
+	return nil
+}

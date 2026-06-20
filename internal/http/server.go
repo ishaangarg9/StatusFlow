@@ -47,7 +47,7 @@ func NewServer(cfg *shared.Config, pool *pgxpool.Pool, sessions *auth.SessionSto
 //	/api/orgs/{orgId}/*      Authn + Tenant (membership) required
 func (s *Server) Routes() nethttp.Handler {
 	// Domain wiring
-	usersH := users.NewHandler(users.NewService(s.pool), s.sessions)
+	usersH := users.NewHandler(users.NewService(s.pool, s.sessions), s.sessions)
 	orgsH := orgs.NewHandler(orgs.NewService(s.pool))
 	membersH := memberships.NewHandler(memberships.NewService(s.pool))
 	invH := invitations.NewHandler(invitations.NewService(s.pool))
