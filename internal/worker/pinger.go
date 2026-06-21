@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
 
 // Pinger runs an HTTP check against a monitor's URL. The dialer is
@@ -102,15 +106,40 @@ func (p *Pinger) Check(ctx context.Context, m Monitor) CheckResult {
 	return r
 }
 
-// runCheck is wired by scheduler.go; see TODO inside.
+// runCheck runs one HTTP check and persists it under the monitor's org. The
+// claim already rescheduled next_check_at, so this only records the result and
+// lets the incident engine open/resolve as the streak warrants — all inside one
+// WithOrgTx so RLS is armed and the check + any incident change commit together.
 func (w *Worker) runCheck(ctx context.Context, m Monitor) {
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(m.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	res := w.pinger.Check(cctx, m)
-	_ = res
-	// TODO(scaffold): inside tenancy.WithOrgTx(ctx, w.pool, m.OrgID, ...):
-	//   INSERT INTO check_results (...);
-	//   UPDATE monitors SET next_check_at = now() + interval_seconds * '1 second' WHERE id = m.ID;
-	//   w.incidents.Apply(ctx, tx, m.OrgID, m.ID, res.Status);
+
+	// Persist with the parent ctx (not cctx): the check's own deadline has
+	// served its purpose, and we don't want a borderline-timed-out check to also
+	// fail to record its result.
+	err := tenancy.WithOrgTx(ctx, w.pool, m.OrgID, func(tx pgx.Tx) error {
+		var statusCode, latency *int
+		if res.StatusCode != 0 {
+			sc := res.StatusCode
+			statusCode = &sc
+		}
+		lm := res.LatencyMs
+		latency = &lm
+		var errMsg *string
+		if res.Error != "" {
+			errMsg = &res.Error
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO check_results (org_id, monitor_id, status, status_code, latency_ms, error)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			m.OrgID, m.ID, res.Status, statusCode, latency, errMsg); err != nil {
+			return err
+		}
+		return w.incidents.Apply(ctx, tx, m.OrgID, m.ID, res.Status)
+	})
+	if err != nil {
+		w.log.Error("persist check", "monitor", m.ID, "org", m.OrgID, "err", err)
+	}
 }

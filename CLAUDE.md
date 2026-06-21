@@ -164,8 +164,28 @@ Follow every step — skipping one is how isolation bugs are born.
    Proven by `test/invitations/` (happy path, email-binding 403, expiry/unknown/used 422,
    already-member/double-accept 409, resend invalidation, revoke incl. accepted-invite
    protection, and the member:invite role gate on create/list/revoke) and an invitation
-   cross-tenant case in `test/isolation/`. **start at Phase 5 next**
-5. **Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.
+   cross-tenant case in `test/isolation/`.
+5. ~~**Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.~~ **DONE.**
+   Monitors (CRUD + `/checks`, gated `monitor:*`), incidents (manual open/update/resolve,
+   gated `incident:*`, with the partial unique index turning a double-open into 409), and
+   status pages (admin CRUD + `PUT …/monitors`, gated `statuspage:publish`/`statuspage:read`).
+   The **public status page** (`GET /api/public/status/{slug}`) is unauthenticated: the org is
+   resolved by the locked-down `public_status_page_org()` SECURITY DEFINER fn (migration 011;
+   returns a row ONLY when `is_public`, NULL→404 hides existence), then the strict projection
+   is read inside `WithOrgTx` under RLS — never URLs, emails, audit, or unpublished data.
+   The **worker** claims due monitors via the `claim_due_monitors()` SECURITY DEFINER fn
+   (migration 012) that atomically locks a batch with `FOR UPDATE SKIP LOCKED` **and** bumps
+   `next_check_at`, so N instances never double-process; each check is persisted and the
+   incident engine (open after `OPEN_THRESHOLD` consecutive downs, resolve after
+   `RESOLVE_THRESHOLD` ups; system-authored audit rows) runs inside the per-monitor
+   `WithOrgTx`. The four SECURITY DEFINER fns (`user_memberships`, `invitation_org_by_token`,
+   `public_status_page_org`, `claim_due_monitors`) are the only sanctioned RLS escape hatches;
+   each returns minimal data and is EXECUTE-granted only to `app_user`. Proven by `test/product/`
+   (monitor lifecycle, URL validation 422, incident double-open 409, public projection hides
+   URL + respects visibility, incident engine open/resolve) and product cross-tenant cases in
+   `test/isolation/` (check_results/incidents/status_pages invisibility + the public fn).
+   **start at Phase 6 next** (note: the invitation-delivery outbox table + worker drain,
+   deferred from Phase 4, is a natural tie-in to fold into Phase 6 hardening).
 6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.
 7. **The proof** — cross-tenant isolation tests + authz tests. The case study is built on this.
 

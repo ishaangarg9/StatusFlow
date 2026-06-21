@@ -17,37 +17,22 @@ type Monitor struct {
 	ExpectedStatus  int
 }
 
-// claimDue selects up to `limit` due monitors and locks them for this tick.
-// FOR UPDATE SKIP LOCKED makes N worker instances safe to run concurrently.
+// claimDue claims up to `limit` due monitors for this tick. The cross-tenant
+// scan + claim + reschedule is done by the claim_due_monitors() SECURITY DEFINER
+// function (migration 012): app_user has no BYPASSRLS, and this is a deliberately
+// cross-org read, so the privileged-but-locked-down function is the sanctioned
+// escape hatch (same pattern as user_memberships / invitation_org_by_token /
+// public_status_page_org).
 //
-// NOTE on RLS: this is a deliberately cross-tenant scan, so it cannot be
-// constrained by `app.current_org_id`. There are three ways to make it work
-// alongside the strict app_user role:
-//
-//  1. Wrap the SELECT in a SECURITY DEFINER function (preferred): the
-//     function is owned by a role that bypasses RLS; app_user is GRANTed
-//     EXECUTE on it. Keeps app_user otherwise unprivileged.
-//  2. Run the worker as a separate worker_user role with BYPASSRLS.
-//  3. Add a permissive policy keyed on a worker-only setting.
-//
-// Pick (1) when adding a migration; until then this scaffold leaves the
-// raw SELECT in place so the shape from doc 02 §8.2 is visible.
+// The function atomically pushes each claimed monitor's next_check_at into the
+// future, so a row is invisible to a concurrent worker the moment it is claimed.
+// FOR UPDATE SKIP LOCKED inside the function guarantees N instances never claim
+// the same monitor. It is a single auto-committed statement here — no explicit
+// transaction, no lock held across the (potentially slow) HTTP check.
 func (w *Worker) claimDue(ctx context.Context, limit int) ([]Monitor, error) {
-	const claimSQL = `
+	rows, err := w.pool.Query(ctx, `
 		SELECT id, org_id, url, method, timeout_ms, interval_seconds, expected_status
-		FROM monitors
-		WHERE is_paused = false AND next_check_at <= now()
-		ORDER BY next_check_at
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
-
-	tx, err := w.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	rows, err := tx.Query(ctx, claimSQL, limit)
+		FROM claim_due_monitors($1)`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +46,5 @@ func (w *Worker) claimDue(ctx context.Context, limit int) ([]Monitor, error) {
 		}
 		out = append(out, m)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, tx.Commit(ctx)
+	return out, rows.Err()
 }

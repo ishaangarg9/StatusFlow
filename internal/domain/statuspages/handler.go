@@ -1,10 +1,14 @@
 package statuspages
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
+	"github.com/ishaangarg9/statusflow/internal/authz"
+	"github.com/ishaangarg9/statusflow/internal/http/middleware"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 )
 
@@ -32,21 +36,115 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	shared.WriteErr(w, shared.NotImplemented("GET /api/orgs/{orgId}/status-pages"))
+	ac := middleware.AuthContextFrom(r.Context())
+	if !authz.Can(ac, authz.ActionStatusRead, &authz.Resource{OrgID: ac.OrgID}) {
+		shared.WriteErr(w, shared.Forbidden())
+		return
+	}
+	pages, err := h.svc.List(r.Context(), ac.OrgID)
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"statusPages": pages})
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	shared.WriteErr(w, shared.NotImplemented("POST /api/orgs/{orgId}/status-pages"))
+	ac := middleware.AuthContextFrom(r.Context())
+	var body struct {
+		Slug       string   `json:"slug"`
+		Title      string   `json:"title"`
+		IsPublic   bool     `json:"isPublic"`
+		MonitorIDs []string `json:"monitorIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		shared.WriteErr(w, shared.Validation("Invalid JSON body."))
+		return
+	}
+	monitorIDs, err := parseUUIDs(body.MonitorIDs)
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	page, err := h.svc.Create(r.Context(), ac, CreateInput{
+		Slug: body.Slug, Title: body.Title, IsPublic: body.IsPublic, MonitorIDs: monitorIDs,
+	})
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	shared.WriteJSON(w, http.StatusCreated, map[string]any{"statusPage": page})
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	shared.WriteErr(w, shared.NotImplemented("PATCH /api/orgs/{orgId}/status-pages/{id}"))
+	ac := middleware.AuthContextFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		shared.WriteErr(w, shared.NotFound())
+		return
+	}
+	var body struct {
+		Title    *string `json:"title"`
+		IsPublic *bool   `json:"isPublic"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		shared.WriteErr(w, shared.Validation("Invalid JSON body."))
+		return
+	}
+	page, err := h.svc.Update(r.Context(), ac, id, UpdateInput{Title: body.Title, IsPublic: body.IsPublic})
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"statusPage": page})
 }
 
 func (h *Handler) setMonitors(w http.ResponseWriter, r *http.Request) {
-	shared.WriteErr(w, shared.NotImplemented("PUT /api/orgs/{orgId}/status-pages/{id}/monitors"))
+	ac := middleware.AuthContextFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		shared.WriteErr(w, shared.NotFound())
+		return
+	}
+	var body struct {
+		MonitorIDs []string `json:"monitorIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		shared.WriteErr(w, shared.Validation("Invalid JSON body."))
+		return
+	}
+	monitorIDs, err := parseUUIDs(body.MonitorIDs)
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	page, err := h.svc.SetMonitors(r.Context(), ac, id, monitorIDs)
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"statusPage": page})
 }
 
 func (h *Handler) publicView(w http.ResponseWriter, r *http.Request) {
-	shared.WriteErr(w, shared.NotImplemented("GET /api/public/status/{slug}"))
+	view, err := h.svc.PublicView(r.Context(), chi.URLParam(r, "slug"))
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	shared.WriteJSON(w, http.StatusOK, view)
+}
+
+// parseUUIDs converts a list of string ids to UUIDs, mapping a malformed entry
+// to a 422 rather than a generic decode failure.
+func parseUUIDs(raw []string) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, s := range raw {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, shared.Validation("monitorIds must be valid ids.")
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
