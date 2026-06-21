@@ -34,6 +34,14 @@ type UserView struct {
 	Name  *string   `json:"name,omitempty"`
 }
 
+type MembershipView struct {
+	OrgID     uuid.UUID `json:"orgId"`
+	OrgName   string    `json:"orgName"`
+	OrgSlug   string    `json:"orgSlug"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type SessionView struct {
 	ID        uuid.UUID `json:"id"`
 	Current   bool      `json:"current"`
@@ -102,10 +110,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 		return "", nil, shared.Unauthorized()
 	}
 	var (
-		id    uuid.UUID
-		em    string
-		name  *string
-		hash  string
+		id   uuid.UUID
+		em   string
+		name *string
+		hash string
 	)
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, email, name, password_hash FROM users WHERE email = $1`, email,
@@ -143,23 +151,42 @@ func (s *Service) LogoutAll(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-// Me returns the current user. Listing the user's memberships across orgs
-// requires a cross-tenant read that the strict app_user role cannot do via
-// the memberships table alone (RLS would scope it to a single org). That
-// will be added later via a SECURITY DEFINER fn — for now the handler
-// returns an empty memberships array.
-func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*UserView, error) {
+// Me returns the current user together with their org memberships. The
+// cross-org membership listing goes through the user_memberships() SECURITY
+// DEFINER function (migration 008) — the sanctioned escape hatch, since
+// app_user is RLS-scoped to one org and cannot read memberships across orgs
+// from the table directly. The function filters strictly to userID.
+func (s *Service) Me(ctx context.Context, userID uuid.UUID) (*UserView, []MembershipView, error) {
 	var u UserView
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, email, name FROM users WHERE id = $1`, userID,
 	).Scan(&u.ID, &u.Email, &u.Name)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, shared.Unauthorized()
+			return nil, nil, shared.Unauthorized()
 		}
-		return nil, shared.Internal(err)
+		return nil, nil, shared.Internal(err)
 	}
-	return &u, nil
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT org_id, org_name, org_slug, role, created_at
+		FROM user_memberships($1)`, userID)
+	if err != nil {
+		return nil, nil, shared.Internal(err)
+	}
+	defer rows.Close()
+	memberships := []MembershipView{}
+	for rows.Next() {
+		var m MembershipView
+		if err := rows.Scan(&m.OrgID, &m.OrgName, &m.OrgSlug, &m.Role, &m.CreatedAt); err != nil {
+			return nil, nil, shared.Internal(err)
+		}
+		memberships = append(memberships, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, shared.Internal(err)
+	}
+	return &u, memberships, nil
 }
 
 // ListSessions returns every active session for the user, flagging which one

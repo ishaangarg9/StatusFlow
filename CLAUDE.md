@@ -131,9 +131,15 @@ Follow every step — skipping one is how isolation bugs are born.
 
 ## 9. Build path (current phase first)
 
-1. **Auth foundation** — signup/login/logout, argon2id, DB-backed sessions. *(start here)*
-2. **Tenancy** — orgs, memberships, first resource via `WithOrgTx`. **Turn RLS on now, early.**
-3. **Roles** — the four roles + `Can()`; gate actions.
+1. ~~**Auth foundation** — signup/login/logout, argon2id, DB-backed sessions.~~ **DONE.**
+2. ~~**Tenancy** — orgs, memberships, first resource via `WithOrgTx`. RLS on.~~ **DONE.**
+   Orgs CRUD (create enrolls caller as owner), member list/role-update/remove with
+   atomic ownership transfer + owner-protection, audit read+write, `/me` cross-org
+   listing via the `user_memberships()` SECURITY DEFINER fn (migration 008), and the
+   cross-tenant isolation proof in `test/isolation/`. RLS was already on from migration 006.
+3. **Roles** — the four roles + `Can()`; gate actions. *(largely in place: `authz.Can` +
+   matrix + structural guards exist and are wired into orgs/memberships/audit handlers;
+   remaining product resources get gated as they're built in Phase 5.)* **start here next**
 4. **Invitations** — invite by email, accept, join with a role.
 5. **Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.
 6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.

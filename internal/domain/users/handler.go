@@ -119,15 +119,14 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		shared.WriteErr(w, shared.Unauthorized())
 		return
 	}
-	u, err := h.svc.Me(r.Context(), user.ID)
+	u, memberships, err := h.svc.Me(r.Context(), user.ID)
 	if err != nil {
 		shared.WriteErr(w, err)
 		return
 	}
-	// memberships is empty for now; cross-org listing needs a SECURITY DEFINER fn (later phase).
 	shared.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":        u,
-		"memberships": []any{},
+		"memberships": memberships,
 	})
 }
 
