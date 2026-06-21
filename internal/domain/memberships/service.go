@@ -87,16 +87,20 @@ func (s *Service) UpdateRole(ctx context.Context, ac authz.AuthContext, targetUs
 			return err // pgx.ErrNoRows -> 404
 		}
 
-		// Definitive authz decision now that the target's role is known.
+		// Definitive authz decision now that the target's current role is
+		// known. authz.Can enforces: only an owner may grant ownership, and an
+		// owner is never directly demoted (transfer only) — so an admin cannot
+		// mint a second owner and the org can never be left ownerless.
 		if !authz.Can(ac, authz.ActionMemberRole, &authz.Resource{
-			OrgID: ac.OrgID, TargetRole: authz.Role(currentRole),
+			OrgID: ac.OrgID, TargetRole: authz.Role(currentRole), NewRole: newRole,
 		}) {
 			return shared.Forbidden()
 		}
 
-		transfer := newRole == authz.RoleOwner && authz.Role(currentRole) != authz.RoleOwner
+		transfer := authz.IsOwnershipTransfer(authz.Role(currentRole), newRole)
 		if transfer {
-			// Promote target to owner, demote the acting owner to admin.
+			// Ownership transfer is owner-only (guaranteed by Can above), so the
+			// acting user IS the current owner; demote them to admin.
 			if _, err := tx.Exec(ctx,
 				`UPDATE memberships SET role = 'admin' WHERE org_id = $1 AND user_id = $2`,
 				ac.OrgID, ac.UserID,
@@ -140,10 +144,10 @@ func (s *Service) UpdateRole(ctx context.Context, ac authz.AuthContext, targetUs
 	return &v, nil
 }
 
-// Remove drops targetUser from the org. An owner cannot be removed via this
-// endpoint — ownership must be transferred first (otherwise the org could be
-// orphaned). The owner-protection guard (admin can't touch an owner) runs
-// through authz.Can with the target's current role.
+// Remove drops targetUser from the org. authz.Can refuses to remove an owner
+// at all (ownership must be transferred first, else the org would be orphaned)
+// and refuses a non-owner touching an owner — so the decision is fully
+// expressed through Can with the target's current role; no inline role check.
 func (s *Service) Remove(ctx context.Context, ac authz.AuthContext, targetUser uuid.UUID) error {
 	err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
 		var currentRole string
@@ -158,9 +162,6 @@ func (s *Service) Remove(ctx context.Context, ac authz.AuthContext, targetUser u
 			OrgID: ac.OrgID, TargetRole: authz.Role(currentRole),
 		}) {
 			return shared.Forbidden()
-		}
-		if authz.Role(currentRole) == authz.RoleOwner {
-			return shared.Validation("Transfer ownership before removing the owner.")
 		}
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`,

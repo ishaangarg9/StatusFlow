@@ -73,6 +73,63 @@ func TestOwnerCannotBeRemovedByAdmin(t *testing.T) {
 	}
 }
 
+// Regression for review finding #1: a non-owner (admin) must NOT be able to
+// grant the owner role — doing so previously minted a second owner and let an
+// admin escalate an arbitrary member to the top role.
+func TestOnlyOwnerCanGrantOwnership(t *testing.T) {
+	org := uuid.New()
+	target := &authz.Resource{OrgID: org, TargetRole: authz.RoleMember, NewRole: authz.RoleOwner}
+
+	for _, role := range []authz.Role{authz.RoleAdmin, authz.RoleMember, authz.RoleViewer} {
+		ac := authz.AuthContext{UserID: uuid.New(), OrgID: org, Role: role}
+		if authz.Can(ac, authz.ActionMemberRole, target) {
+			t.Errorf("%s must not be able to promote a member to owner", role)
+		}
+	}
+	owner := authz.AuthContext{UserID: uuid.New(), OrgID: org, Role: authz.RoleOwner}
+	if !authz.Can(owner, authz.ActionMemberRole, target) {
+		t.Fatal("owner must be able to transfer ownership (promote a member to owner)")
+	}
+}
+
+// Regression for review finding #2: an owner must NOT be able to demote an
+// owner (including themselves) directly — that would leave the org with zero
+// owners. The only way to stop being owner is to transfer ownership.
+func TestOwnerCannotBeDirectlyDemoted(t *testing.T) {
+	org := uuid.New()
+	owner := authz.AuthContext{UserID: uuid.New(), OrgID: org, Role: authz.RoleOwner}
+	for _, to := range []authz.Role{authz.RoleAdmin, authz.RoleMember, authz.RoleViewer} {
+		res := &authz.Resource{OrgID: org, TargetRole: authz.RoleOwner, NewRole: to}
+		if authz.Can(owner, authz.ActionMemberRole, res) {
+			t.Errorf("owner must not be able to directly demote the owner to %s", to)
+		}
+	}
+}
+
+// An owner is never removable directly (transfer first), regardless of who asks.
+func TestOwnerCannotBeRemovedByAnyone(t *testing.T) {
+	org := uuid.New()
+	res := &authz.Resource{OrgID: org, TargetRole: authz.RoleOwner}
+	for _, role := range []authz.Role{authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer} {
+		ac := authz.AuthContext{UserID: uuid.New(), OrgID: org, Role: role}
+		if authz.Can(ac, authz.ActionMemberRemove, res) {
+			t.Errorf("%s must not be able to remove an owner", role)
+		}
+	}
+}
+
+// Sanity: ordinary role changes by admin/owner remain allowed.
+func TestOrdinaryRoleChangesAllowed(t *testing.T) {
+	org := uuid.New()
+	for _, role := range []authz.Role{authz.RoleOwner, authz.RoleAdmin} {
+		ac := authz.AuthContext{UserID: uuid.New(), OrgID: org, Role: role}
+		res := &authz.Resource{OrgID: org, TargetRole: authz.RoleMember, NewRole: authz.RoleAdmin}
+		if !authz.Can(ac, authz.ActionMemberRole, res) {
+			t.Errorf("%s should be able to change a member to admin", role)
+		}
+	}
+}
+
 func TestOrgDeleteIsOwnerOnly(t *testing.T) {
 	org := uuid.New()
 	for _, role := range []authz.Role{authz.RoleAdmin, authz.RoleMember, authz.RoleViewer} {
