@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ishaangarg9/statusflow/internal/authz"
@@ -91,8 +90,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput) 
 		})
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if shared.IsUniqueViolation(err) {
 			return nil, shared.Conflict("That slug is already taken.")
 		}
 		return nil, shared.Internal(err)
@@ -141,17 +139,31 @@ func (s *Service) Update(ctx context.Context, actorID, orgID uuid.UUID, in Updat
 
 	var v OrgView
 	err := tenancy.WithOrgTx(ctx, s.pool, orgID, func(tx pgx.Tx) error {
-		// COALESCE keeps the existing value when a field is omitted.
+		// Capture the prior values in the same statement so the audit row can
+		// record from->to. COALESCE keeps the existing value when a field is
+		// omitted.
+		var oldName, oldSlug string
 		if err := tx.QueryRow(ctx, `
-			UPDATE organizations
-			SET name = COALESCE($2, name),
-			    slug = COALESCE($3, slug),
+			WITH prev AS (
+				SELECT name AS old_name, slug AS old_slug FROM organizations WHERE id = $1
+			)
+			UPDATE organizations o
+			SET name = COALESCE($2, o.name),
+			    slug = COALESCE($3, o.slug),
 			    updated_at = now()
-			WHERE id = $1
-			RETURNING id, name, slug, created_at`,
+			FROM prev
+			WHERE o.id = $1
+			RETURNING o.id, o.name, o.slug, o.created_at, prev.old_name, prev.old_slug`,
 			orgID, name, slug,
-		).Scan(&v.ID, &v.Name, &v.Slug, &v.CreatedAt); err != nil {
+		).Scan(&v.ID, &v.Name, &v.Slug, &v.CreatedAt, &oldName, &oldSlug); err != nil {
 			return err
+		}
+		meta := map[string]any{}
+		if v.Name != oldName {
+			meta["name"] = map[string]any{"from": oldName, "to": v.Name}
+		}
+		if v.Slug != oldSlug {
+			meta["slug"] = map[string]any{"from": oldSlug, "to": v.Slug}
 		}
 		return audit.Record(ctx, tx, audit.Entry{
 			OrgID:        orgID,
@@ -159,14 +171,14 @@ func (s *Service) Update(ctx context.Context, actorID, orgID uuid.UUID, in Updat
 			Action:       "org:update",
 			ResourceType: "organization",
 			ResourceID:   &orgID,
+			Metadata:     meta,
 		})
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, shared.NotFound()
 		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if shared.IsUniqueViolation(err) {
 			return nil, shared.Conflict("That slug is already taken.")
 		}
 		return nil, shared.Internal(err)
@@ -175,10 +187,11 @@ func (s *Service) Update(ctx context.Context, actorID, orgID uuid.UUID, in Updat
 }
 
 // Delete removes the org and (via ON DELETE CASCADE) all of its tenant data,
-// including its audit_logs. We therefore do NOT write an audit row for the
-// delete — it would be cascaded away in the same transaction. The org's entire
-// trail vanishes with it by design (tenant offboarding).
-func (s *Service) Delete(ctx context.Context, orgID uuid.UUID) error {
+// including its per-org audit_logs. The deletion itself is recorded in the
+// GLOBAL audit sink (global_audit_logs, no org FK / no RLS) in the same
+// transaction, so the destructive offboarding leaves a durable trace even
+// though the org's own trail is cascaded away.
+func (s *Service) Delete(ctx context.Context, actorID, orgID uuid.UUID) error {
 	err := tenancy.WithOrgTx(ctx, s.pool, orgID, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, `DELETE FROM organizations WHERE id = $1`, orgID)
 		if err != nil {
@@ -187,7 +200,11 @@ func (s *Service) Delete(ctx context.Context, orgID uuid.UUID) error {
 		if cmd.RowsAffected() == 0 {
 			return pgx.ErrNoRows
 		}
-		return nil
+		return audit.RecordGlobal(ctx, tx, audit.Entry{
+			OrgID:       orgID,
+			ActorUserID: actorID,
+			Action:      "org:delete",
+		})
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

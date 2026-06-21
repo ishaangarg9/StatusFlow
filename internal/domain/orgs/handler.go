@@ -97,7 +97,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		shared.WriteErr(w, shared.Forbidden())
 		return
 	}
-	if err := h.svc.Delete(r.Context(), ac.OrgID); err != nil {
+	if err := h.svc.Delete(r.Context(), ac.UserID, ac.OrgID); err != nil {
 		shared.WriteErr(w, err)
 		return
 	}

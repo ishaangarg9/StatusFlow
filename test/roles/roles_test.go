@@ -24,6 +24,7 @@ import (
 	"github.com/ishaangarg9/statusflow/internal/authz"
 	"github.com/ishaangarg9/statusflow/internal/db"
 	"github.com/ishaangarg9/statusflow/internal/domain/memberships"
+	"github.com/ishaangarg9/statusflow/internal/domain/orgs"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
@@ -198,6 +199,38 @@ func TestOwnerCanTransferOwnership(t *testing.T) {
 	}
 	if r := f.roleOf(ctx, t, f.alice); r != "admin" {
 		t.Fatalf("alice should be demoted to 'admin' after transfer, got %q", r)
+	}
+}
+
+// Deleting an org records a durable row in the GLOBAL audit sink that survives
+// the cascade that wipes the org's own audit_logs (review finding #4).
+func TestOrgDeleteWritesGlobalAudit(t *testing.T) {
+	ctx, f := setup(t)
+	orgSvc := orgs.NewService(f.pool)
+
+	// Clean up the global row this test leaves behind (org_id has no FK).
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = f.pool.Exec(cctx, `DELETE FROM global_audit_logs WHERE org_id = $1`, f.org)
+	})
+
+	if err := orgSvc.Delete(ctx, f.alice, f.org); err != nil {
+		t.Fatalf("delete org: %v", err)
+	}
+
+	var action string
+	var actor uuid.UUID
+	if err := f.pool.QueryRow(ctx,
+		`SELECT action, actor_user_id FROM global_audit_logs WHERE org_id = $1`,
+		f.org).Scan(&action, &actor); err != nil {
+		t.Fatalf("expected a global_audit_logs row for the deleted org: %v", err)
+	}
+	if action != "org:delete" {
+		t.Fatalf("action = %q, want org:delete", action)
+	}
+	if actor != f.alice {
+		t.Fatalf("actor = %s, want alice (%s)", actor, f.alice)
 	}
 }
 

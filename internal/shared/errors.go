@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type AppError struct {
@@ -44,6 +46,14 @@ func Internal(err error) *AppError {
 }
 func NotImplemented(name string) *AppError {
 	return &AppError{http.StatusNotImplemented, "not_implemented", name + " is not implemented yet."}
+}
+
+// IsUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505). Centralizes the one place that knows how a
+// duplicate-key error looks, so callers map it to a 409 consistently.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // WriteErr renders an AppError (or a fallthrough 500) as the standard envelope.

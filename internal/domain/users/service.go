@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ishaangarg9/statusflow/internal/auth"
@@ -93,8 +92,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*UserView, error)
 		email, hash, name,
 	).Scan(&u.ID, &u.Email, &u.Name)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if shared.IsUniqueViolation(err) {
 			return nil, shared.Conflict("Email is already registered.")
 		}
 		return nil, shared.Internal(err)

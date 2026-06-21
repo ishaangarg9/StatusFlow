@@ -32,8 +32,11 @@ type EntryView struct {
 // List returns the org's audit entries, newest first. The user join is to the
 // global users table; audit_logs rows are constrained to current_org() by RLS.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID, limit int) ([]EntryView, error) {
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
 	}
 	out := []EntryView{}
 	err := tenancy.WithOrgTx(ctx, s.pool, orgID, func(tx pgx.Tx) error {

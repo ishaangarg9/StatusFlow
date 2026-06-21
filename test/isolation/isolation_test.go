@@ -148,6 +148,35 @@ func TestForeignRowIsInvisible(t *testing.T) {
 	}
 }
 
+// TestUserMembershipsReturnsOnlyCallersRows guards the one cross-org read in
+// the system — the user_memberships() SECURITY DEFINER function, which bypasses
+// RLS and whose only isolation guarantee is its WHERE user_id = $1 filter. User
+// A must see only org A; never org B (carol/dave's org).
+func TestUserMembershipsReturnsOnlyCallersRows(t *testing.T) {
+	ctx, pool, s := setup(t)
+
+	rows, err := pool.Query(ctx,
+		`SELECT org_id FROM user_memberships($1)`, s.userA)
+	if err != nil {
+		t.Fatalf("user_memberships(userA): %v", err)
+	}
+	defer rows.Close()
+	var orgs []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		orgs = append(orgs, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(orgs) != 1 || orgs[0] != s.orgA {
+		t.Fatalf("user A must see only org A, got %v (orgB=%s leaked? )", orgs, s.orgB)
+	}
+}
+
 // TestWriteCheckBlocksCrossOrgInsert confirms WITH CHECK refuses an insert that
 // tries to plant a row in another org while org A is the active tenant.
 func TestWriteCheckBlocksCrossOrgInsert(t *testing.T) {

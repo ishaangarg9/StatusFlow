@@ -55,3 +55,32 @@ func Record(ctx context.Context, tx pgx.Tx, e Entry) error {
 	}
 	return nil
 }
+
+// RecordGlobal writes to the GLOBAL audit sink (global_audit_logs), which has
+// no org FK and no RLS, so the record survives even when the org's own
+// audit_logs are cascade-deleted. Use this for events that must outlive the
+// tenant, e.g. org deletion. Still written on the mutation's transaction so it
+// commits atomically with the change.
+func RecordGlobal(ctx context.Context, tx pgx.Tx, e Entry) error {
+	meta := e.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal global audit metadata: %w", err)
+	}
+	var actor any
+	if e.ActorUserID != uuid.Nil {
+		actor = e.ActorUserID
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO global_audit_logs (org_id, actor_user_id, action, metadata)
+		VALUES ($1, $2, $3, $4)`,
+		e.OrgID, actor, e.Action, raw,
+	)
+	if err != nil {
+		return fmt.Errorf("insert global audit row: %w", err)
+	}
+	return nil
+}

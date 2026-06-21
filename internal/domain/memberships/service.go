@@ -109,22 +109,22 @@ func (s *Service) UpdateRole(ctx context.Context, ac authz.AuthContext, targetUs
 			}
 		}
 
+		// One round trip: update the role and return the row joined to the
+		// user's identity fields for the response.
+		var role string
 		if err := tx.QueryRow(ctx, `
-			UPDATE memberships SET role = $3
-			WHERE org_id = $1 AND user_id = $2
-			RETURNING user_id, role, created_at`,
+			WITH upd AS (
+				UPDATE memberships SET role = $3
+				WHERE org_id = $1 AND user_id = $2
+				RETURNING user_id, role, created_at
+			)
+			SELECT upd.user_id, upd.role, upd.created_at, u.email, u.name
+			FROM upd JOIN users u ON u.id = upd.user_id`,
 			ac.OrgID, targetUser, string(newRole),
-		).Scan(&v.UserID, new(string), &v.CreatedAt); err != nil {
+		).Scan(&v.UserID, &role, &v.CreatedAt, &v.Email, &v.Name); err != nil {
 			return err
 		}
-		v.Role = newRole
-
-		// Fill in identity fields for the response.
-		if err := tx.QueryRow(ctx,
-			`SELECT email, name FROM users WHERE id = $1`, targetUser,
-		).Scan(&v.Email, &v.Name); err != nil {
-			return err
-		}
+		v.Role = authz.Role(role)
 
 		return audit.Record(ctx, tx, audit.Entry{
 			OrgID:        ac.OrgID,
