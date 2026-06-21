@@ -56,6 +56,18 @@ func IsUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// MapAppErr passes a *AppError straight through (e.g. a Forbidden/Validation
+// raised deep inside a tenancy.WithOrgTx closure) and converts anything else
+// into a 500. Services call this on the error returned by WithOrgTx so an
+// intended HTTP status is preserved instead of being masked as Internal.
+func MapAppErr(err error) error {
+	var ae *AppError
+	if errors.As(err, &ae) {
+		return ae
+	}
+	return Internal(err)
+}
+
 // WriteErr renders an AppError (or a fallthrough 500) as the standard envelope.
 func WriteErr(w http.ResponseWriter, err error) {
 	var ae *AppError

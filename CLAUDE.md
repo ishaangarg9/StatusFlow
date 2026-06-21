@@ -78,7 +78,7 @@ test/{isolation/,authz/}       # the proof
 web/                           # Next.js app
 ```
 
-**Layering:** handlers are thin (parse → `Can()` → call service → write response). Services own the `WithOrgTx` boundary and business logic. Repos take a `pgx.Tx` and do data access only. Never call the DB from a handler directly; never put auth logic in a repo.
+**Layering:** handlers are thin (parse → authorize → call service → write response). The `Can()` gate lives in the handler by default, but may live in the **service** when that makes it uniformly unit-testable, or when the decision needs data only the service can read (e.g. a target member's current role) — `memberships` (structural guards) and `invitations` (the `member:invite` gate) decide in the service. Either way the decision goes through `authz.Can`; the rule is *where* the call sits, not whether it happens. Services own the `WithOrgTx` boundary and business logic. Repos take a `pgx.Tx` and do data access only. Never call the DB from a handler directly; never put auth logic in a repo.
 
 ---
 
@@ -102,7 +102,8 @@ Follow every step — skipping one is how isolation bugs are born.
 
 - `gofmt`/`goimports` clean; `go vet` and `staticcheck` must pass; `sqlc generate` output must be committed and not stale.
 - `context.Context` is the first parameter of anything that does I/O; thread it through.
-- Errors: wrap with `%w`; return `shared.AppError` for anything that maps to an HTTP status. **Never `panic` in request paths.**
+- Errors: wrap with `%w`; return `shared.AppError` for anything that maps to an HTTP status. **Never `panic` in request paths.** Map a `WithOrgTx` closure's error with `shared.MapAppErr` (passes intended statuses through, else 500) — don't blanket-wrap as `Internal`.
+- Reuse the shared primitives instead of re-implementing them per domain: `shared.ValidEmail`, `authz.ValidRole` / `authz.AssignableViaInvite` (role identity lives in `authz`), `shared.MapAppErr`, `shared.IsUniqueViolation`.
 - Never edit files under `internal/db/sqlc/` by hand — they are generated.
 - No global mutable state beyond config and the pool wired at boot.
 - Validate input at the edge → `422`; don't trust the client.
@@ -146,14 +147,23 @@ Follow every step — skipping one is how isolation bugs are born.
    `Role` comparison appears outside `internal/authz/`). Remaining product resources get
    gated as they're built in Phase 5.
 4. ~~**Invitations** — invite by email, accept, join with a role.~~ **DONE.**
-   Org-scoped issue/list/revoke (gated on `member:invite`; resend via upsert; owner-role
-   invites refused; existing-member refused) and the global `POST /api/invitations/accept`.
+   Org-scoped issue/list/revoke and the global `POST /api/invitations/accept`. The
+   `member:invite` gate (owner/admin) lives in the **service** for all three management
+   ops (so it is unit-tested and uniform; handlers are thin). Resend via upsert (preserves
+   the original `created_at`); owner-role invites refused; existing-member refused; `List`
+   returns only live (unaccepted, unexpired) invites; `Revoke` only deletes pending invites
+   so an accepted invitation's row is never destroyed.
    Accept is the one pre-membership write: the org is found via the locked-down
-   `invitation_org_by_token()` SECURITY DEFINER fn (migration 010), then the join +
-   single-use mark + audit run inside `WithOrgTx` with RLS armed. Invites are CSPRNG
+   `invitation_org_by_token()` SECURITY DEFINER fn (migration 010; its NULL result is
+   scanned into a `*uuid.UUID` so an unknown token is an explicit nil → 422), then the
+   join + single-use mark + audit run inside `WithOrgTx` with RLS armed. Invites are CSPRNG
    tokens stored sha256-hashed, bound to the target email, single-use, and 7-day expiring.
+   The raw token leaves the server ONLY through the `invitations.Mailer` interface (dev
+   impl `OutboxMailer` writes to a filesystem outbox; a real transport is Phase 6) — it is
+   never returned over the API or logged.
    Proven by `test/invitations/` (happy path, email-binding 403, expiry/unknown/used 422,
-   already-member/double-accept 409, resend invalidation, revoke) and an invitation
+   already-member/double-accept 409, resend invalidation, revoke incl. accepted-invite
+   protection, and the member:invite role gate on create/list/revoke) and an invitation
    cross-tenant case in `test/isolation/`. **start at Phase 5 next**
 5. **Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.
 6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.

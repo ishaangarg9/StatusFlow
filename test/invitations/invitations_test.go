@@ -1,8 +1,9 @@
 // Package invitations_test is the end-to-end regression for Phase 4 (invites).
 // It drives the real invitations.Service against a real Postgres as app_user and
-// proves the full lifecycle: issue -> accept -> join, plus the guards that keep
-// the flow safe (email binding, expiry, single-use, owner-role rejection, and
-// the already-a-member conflict).
+// proves the full lifecycle: issue -> accept -> join, the guards that keep the
+// flow safe (email binding, expiry, single-use, owner-role rejection, the
+// already-a-member conflict, accepted-invite revoke protection), and the
+// member:invite authorization gate on the management endpoints.
 //
 // Requires DATABASE_URL (app_user DSN); skips otherwise, like the isolation and
 // roles suites:
@@ -15,6 +16,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,9 +33,35 @@ import (
 	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
 
+// captureMailer is the test transport: it records the raw token per recipient so
+// tests can drive Accept exactly as a real invitee would after receiving the
+// email. This replaces the old "Create returns the token" shortcut and proves
+// the token actually flows through the Mailer.
+type captureMailer struct {
+	mu   sync.Mutex
+	sent map[string]string // lower(email) -> last raw token
+}
+
+func (m *captureMailer) SendInvitation(_ context.Context, inv invitations.Invite) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sent == nil {
+		m.sent = map[string]string{}
+	}
+	m.sent[strings.ToLower(inv.To)] = inv.RawToken
+	return nil
+}
+
+func (m *captureMailer) tokenFor(email string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sent[strings.ToLower(email)]
+}
+
 type fixture struct {
 	pool       *pgxpool.Pool
 	svc        *invitations.Service
+	mail       *captureMailer
 	org        uuid.UUID
 	owner      uuid.UUID // alice, owner of org
 	invitee    *auth.User
@@ -55,9 +84,11 @@ func setup(t *testing.T) (context.Context, fixture) {
 	suffix := uuid.NewString()[:8]
 	ownerEml := "inv-" + suffix + "-alice@example.com"
 	inviteeEml := "inv-" + suffix + "-grace@example.com"
+	mail := &captureMailer{}
 	f := fixture{
 		pool:       pool,
-		svc:        invitations.NewService(pool),
+		svc:        invitations.NewService(pool, mail),
+		mail:       mail,
 		org:        uuid.New(),
 		owner:      uuid.New(),
 		invitee:    &auth.User{ID: uuid.New(), Email: inviteeEml},
@@ -108,6 +139,21 @@ func (f fixture) ownerAC() authz.AuthContext {
 	return authz.AuthContext{UserID: f.owner, OrgID: f.org, Role: authz.RoleOwner}
 }
 
+// invite issues an invitation as the owner and returns the view plus the raw
+// token captured by the test mailer.
+func (f fixture) invite(ctx context.Context, t *testing.T, email string, role authz.Role) (*invitations.InvitationView, string) {
+	t.Helper()
+	inv, err := f.svc.Create(ctx, f.ownerAC(), invitations.CreateInput{Email: email, Role: role})
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	token := f.mail.tokenFor(email)
+	if token == "" {
+		t.Fatal("mailer did not receive a raw token")
+	}
+	return inv, token
+}
+
 func (f fixture) roleOf(ctx context.Context, t *testing.T, user uuid.UUID) (string, bool) {
 	t.Helper()
 	var r string
@@ -138,14 +184,7 @@ func statusOf(err error) int {
 func TestInviteAcceptHappyPath(t *testing.T) {
 	ctx, f := setup(t)
 
-	inv, token, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("create invite: %v", err)
-	}
-	if token == "" {
-		t.Fatal("expected a raw token to deliver")
-	}
+	inv, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
 	if inv.Role != authz.RoleMember {
 		t.Fatalf("invite role = %q, want member", inv.Role)
 	}
@@ -162,7 +201,7 @@ func TestInviteAcceptHappyPath(t *testing.T) {
 	}
 
 	// No longer pending.
-	pending, err := f.svc.List(ctx, f.org)
+	pending, err := f.svc.List(ctx, f.ownerAC())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -178,14 +217,10 @@ func TestInviteAcceptHappyPath(t *testing.T) {
 func TestAcceptRejectsEmailMismatch(t *testing.T) {
 	ctx, f := setup(t)
 
-	_, token, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("create invite: %v", err)
-	}
+	_, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
 
 	intruder := &auth.User{ID: uuid.New(), Email: "someone-else@example.com"}
-	_, err = f.svc.Accept(ctx, intruder, token)
+	_, err := f.svc.Accept(ctx, intruder, token)
 	if status := statusOf(err); status != 403 {
 		t.Fatalf("email-mismatch accept = %d (%v), want 403", status, err)
 	}
@@ -198,11 +233,7 @@ func TestAcceptRejectsEmailMismatch(t *testing.T) {
 func TestAcceptRejectsExpired(t *testing.T) {
 	ctx, f := setup(t)
 
-	_, token, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("create invite: %v", err)
-	}
+	_, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
 	// Force expiry in the past.
 	tokenHash := auth.HashToken(token)
 	if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
@@ -214,7 +245,7 @@ func TestAcceptRejectsExpired(t *testing.T) {
 		t.Fatalf("expire invite: %v", err)
 	}
 
-	_, err = f.svc.Accept(ctx, f.invitee, token)
+	_, err := f.svc.Accept(ctx, f.invitee, token)
 	if status := statusOf(err); status != 422 {
 		t.Fatalf("expired accept = %d (%v), want 422", status, err)
 	}
@@ -227,15 +258,11 @@ func TestAcceptRejectsExpired(t *testing.T) {
 func TestAcceptIsSingleUse(t *testing.T) {
 	ctx, f := setup(t)
 
-	_, token, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("create invite: %v", err)
-	}
+	_, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
 	if _, err := f.svc.Accept(ctx, f.invitee, token); err != nil {
 		t.Fatalf("first accept: %v", err)
 	}
-	_, err = f.svc.Accept(ctx, f.invitee, token)
+	_, err := f.svc.Accept(ctx, f.invitee, token)
 	if status := statusOf(err); status != 409 {
 		t.Fatalf("second accept = %d (%v), want 409", status, err)
 	}
@@ -256,7 +283,7 @@ func TestAcceptRejectsUnknownToken(t *testing.T) {
 func TestCannotInviteOwner(t *testing.T) {
 	ctx, f := setup(t)
 
-	_, _, err := f.svc.Create(ctx, f.ownerAC(),
+	_, err := f.svc.Create(ctx, f.ownerAC(),
 		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleOwner})
 	if status := statusOf(err); status != 422 {
 		t.Fatalf("invite-owner = %d (%v), want 422", status, err)
@@ -267,13 +294,12 @@ func TestCannotInviteOwner(t *testing.T) {
 func TestCannotInviteExistingMember(t *testing.T) {
 	ctx, f := setup(t)
 
-	// owner's own email is already a member.
 	var ownerEmail string
 	if err := f.pool.QueryRow(ctx,
 		`SELECT email FROM users WHERE id = $1`, f.owner).Scan(&ownerEmail); err != nil {
 		t.Fatalf("read owner email: %v", err)
 	}
-	_, _, err := f.svc.Create(ctx, f.ownerAC(),
+	_, err := f.svc.Create(ctx, f.ownerAC(),
 		invitations.CreateInput{Email: ownerEmail, Role: authz.RoleMember})
 	if status := statusOf(err); status != 409 {
 		t.Fatalf("invite-existing-member = %d (%v), want 409", status, err)
@@ -281,20 +307,12 @@ func TestCannotInviteExistingMember(t *testing.T) {
 }
 
 // Re-issuing an invite for the same email replaces the pending one (resend): the
-// old token stops working and the new token accepts.
+// old token stops working and the new token accepts with the resent role.
 func TestResendInvalidatesOldToken(t *testing.T) {
 	ctx, f := setup(t)
 
-	_, oldToken, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("first invite: %v", err)
-	}
-	_, newToken, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleViewer})
-	if err != nil {
-		t.Fatalf("resend invite: %v", err)
-	}
+	_, oldToken := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
+	_, newToken := f.invite(ctx, t, f.inviteeEml, authz.RoleViewer)
 	if oldToken == newToken {
 		t.Fatal("resend should mint a fresh token")
 	}
@@ -311,23 +329,78 @@ func TestResendInvalidatesOldToken(t *testing.T) {
 	}
 }
 
-// Revoking a pending invite removes it; a subsequent accept is then a 422.
+// Revoking a pending invite removes it; a subsequent accept is then a 422, and a
+// repeat revoke is a 404.
 func TestRevokePreventsAccept(t *testing.T) {
 	ctx, f := setup(t)
 
-	inv, token, err := f.svc.Create(ctx, f.ownerAC(),
-		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
-	if err != nil {
-		t.Fatalf("create invite: %v", err)
-	}
+	inv, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
 	if err := f.svc.Revoke(ctx, f.ownerAC(), inv.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if _, err := f.svc.Accept(ctx, f.invitee, token); statusOf(err) != 422 {
 		t.Fatalf("accept after revoke = %v, want 422", err)
 	}
-	// Revoking again is a 404.
 	if err := f.svc.Revoke(ctx, f.ownerAC(), inv.ID); statusOf(err) != 404 {
 		t.Fatalf("double revoke = %v, want 404", err)
+	}
+}
+
+// An ACCEPTED invitation cannot be revoked: revoke only touches pending invites,
+// so the historical accepted row survives (404 on the revoke attempt).
+func TestRevokeCannotDeleteAcceptedInvite(t *testing.T) {
+	ctx, f := setup(t)
+
+	inv, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
+	if _, err := f.svc.Accept(ctx, f.invitee, token); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if err := f.svc.Revoke(ctx, f.ownerAC(), inv.ID); statusOf(err) != 404 {
+		t.Fatalf("revoke accepted invite = %v, want 404", err)
+	}
+	// The accepted row must still exist.
+	var n int
+	if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM invitations WHERE org_id = $1 AND id = $2 AND accepted_at IS NOT NULL`,
+			f.org, inv.ID).Scan(&n)
+	}); err != nil {
+		t.Fatalf("count accepted invite: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("accepted invitation row was destroyed (found %d, want 1)", n)
+	}
+}
+
+// The three management endpoints are gated on member:invite (owner/admin only):
+// a member or viewer is forbidden, and no DB work happens (403 before the tx).
+func TestManagementEndpointsDenyLowRoles(t *testing.T) {
+	ctx, f := setup(t)
+
+	for _, role := range []authz.Role{authz.RoleMember, authz.RoleViewer} {
+		ac := authz.AuthContext{UserID: uuid.New(), OrgID: f.org, Role: role}
+
+		if _, err := f.svc.Create(ctx, ac,
+			invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember}); statusOf(err) != 403 {
+			t.Errorf("%s create = %v, want 403", role, err)
+		}
+		if _, err := f.svc.List(ctx, ac); statusOf(err) != 403 {
+			t.Errorf("%s list = %v, want 403", role, err)
+		}
+		if err := f.svc.Revoke(ctx, ac, uuid.New()); statusOf(err) != 403 {
+			t.Errorf("%s revoke = %v, want 403", role, err)
+		}
+	}
+}
+
+// owner and admin may manage invitations (list succeeds for both).
+func TestManagementEndpointsAllowOwnerAndAdmin(t *testing.T) {
+	ctx, f := setup(t)
+
+	for _, role := range []authz.Role{authz.RoleOwner, authz.RoleAdmin} {
+		ac := authz.AuthContext{UserID: f.owner, OrgID: f.org, Role: role}
+		if _, err := f.svc.List(ctx, ac); err != nil {
+			t.Errorf("%s list = %v, want success", role, err)
+		}
 	}
 }

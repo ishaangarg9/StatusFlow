@@ -50,7 +50,10 @@ func (s *Server) Routes() nethttp.Handler {
 	usersH := users.NewHandler(users.NewService(s.pool, s.sessions), s.sessions)
 	orgsH := orgs.NewHandler(orgs.NewService(s.pool))
 	membersH := memberships.NewHandler(memberships.NewService(s.pool))
-	invH := invitations.NewHandler(invitations.NewService(s.pool))
+	// Dev transport: invitations are written to a filesystem outbox (the raw
+	// token is delivered out-of-band, never logged). Phase 6 swaps this for a
+	// real mailer.
+	invH := invitations.NewHandler(invitations.NewService(s.pool, invitations.NewOutboxMailer("")))
 	monH := monitors.NewHandler(monitors.NewService(s.pool))
 	incH := incidents.NewHandler(incidents.NewService(s.pool))
 	spH := statuspages.NewHandler(statuspages.NewService(s.pool))

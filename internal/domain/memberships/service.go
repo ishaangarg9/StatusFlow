@@ -73,7 +73,7 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]MemberView, erro
 // Setting a member to 'owner' is an ownership transfer: it atomically demotes
 // the acting owner to 'admin' so the single-owner invariant is preserved.
 func (s *Service) UpdateRole(ctx context.Context, ac authz.AuthContext, targetUser uuid.UUID, newRole authz.Role) (*MemberView, error) {
-	if !validRole(newRole) {
+	if !authz.ValidRole(newRole) {
 		return nil, shared.Validation("Invalid role.")
 	}
 	var v MemberView
@@ -139,7 +139,7 @@ func (s *Service) UpdateRole(ctx context.Context, ac authz.AuthContext, targetUs
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, shared.NotFound()
 		}
-		return nil, mapErr(err)
+		return nil, shared.MapAppErr(err)
 	}
 	return &v, nil
 }
@@ -182,25 +182,7 @@ func (s *Service) Remove(ctx context.Context, ac authz.AuthContext, targetUser u
 		if errors.Is(err, pgx.ErrNoRows) {
 			return shared.NotFound()
 		}
-		return mapErr(err)
+		return shared.MapAppErr(err)
 	}
 	return nil
-}
-
-func validRole(r authz.Role) bool {
-	switch r {
-	case authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer:
-		return true
-	}
-	return false
-}
-
-// mapErr passes AppErrors (e.g. Forbidden/Validation raised inside the tx)
-// straight through; everything else becomes a 500.
-func mapErr(err error) error {
-	var ae *shared.AppError
-	if errors.As(err, &ae) {
-		return ae
-	}
-	return shared.Internal(err)
 }

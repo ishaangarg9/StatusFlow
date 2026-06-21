@@ -43,6 +43,25 @@ func AllRoles() []Role {
 	return []Role{RoleOwner, RoleAdmin, RoleMember, RoleViewer}
 }
 
+// ValidRole reports whether r is one of the four known roles. The role set
+// lives here (authz owns role identity); callers validate against this rather
+// than hand-writing their own role switch.
+func ValidRole(r Role) bool {
+	switch r {
+	case RoleOwner, RoleAdmin, RoleMember, RoleViewer:
+		return true
+	}
+	return false
+}
+
+// AssignableViaInvite reports whether r is a role an invitation may grant. owner
+// is excluded: ownership is transfer-only (see IsOwnershipTransfer), so an invite
+// must never mint a second owner. Keeping this here means role-equality logic
+// stays inside authz (CLAUDE.md §2.5).
+func AssignableViaInvite(r Role) bool {
+	return ValidRole(r) && r != RoleOwner
+}
+
 // AllActions is the canonical list of every gated action. Keep it in sync when
 // adding an Action constant — the permission-matrix test asserts its expected
 // matrix covers exactly this set, so a new action without a matrix entry (and

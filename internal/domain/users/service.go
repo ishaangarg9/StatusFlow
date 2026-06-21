@@ -71,8 +71,8 @@ type LoginInput struct {
 // the email is already registered (unique violation on the email column).
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*UserView, error) {
 	email := strings.ToLower(strings.TrimSpace(in.Email))
-	if err := validateEmail(email); err != nil {
-		return nil, err
+	if !shared.ValidEmail(email) {
+		return nil, shared.Validation("Invalid email.")
 	}
 	if err := validatePassword(in.Password); err != nil {
 		return nil, err
@@ -232,13 +232,6 @@ func (s *Service) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID
 }
 
 // --- Input validation ----------------------------------------------------
-
-func validateEmail(s string) error {
-	if s == "" || len(s) > 254 || !strings.Contains(s, "@") {
-		return shared.Validation("Invalid email.")
-	}
-	return nil
-}
 
 func validatePassword(s string) error {
 	if len(s) < 8 {

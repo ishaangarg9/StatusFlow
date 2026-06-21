@@ -25,24 +25,17 @@ func (h *Handler) MountGlobal(r chi.Router) {
 }
 
 // MountOrgScoped mounts org-scoped invite routes.
-// Caller must apply Authn + Tenant beforehand.
+// Caller must apply Authn + Tenant beforehand. Authorization (member:invite) is
+// enforced in the service so it is unit-tested and uniform across these routes.
 func (h *Handler) MountOrgScoped(r chi.Router) {
 	r.Get("/invitations", h.list)
 	r.Post("/invitations", h.create)
 	r.Delete("/invitations/{id}", h.revoke)
 }
 
-// All three management routes gate on member:invite (owner, admin) — the
-// doc-04 access intent for issuing, listing, and revoking invitations. (member:
-// read is for the members list; invitations carry pending emails and are
-// managed by the same roles that may invite.)
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	ac := middleware.AuthContextFrom(r.Context())
-	if !authz.Can(ac, authz.ActionMemberInvite, &authz.Resource{OrgID: ac.OrgID}) {
-		shared.WriteErr(w, shared.Forbidden())
-		return
-	}
-	invs, err := h.svc.List(r.Context(), ac.OrgID)
+	invs, err := h.svc.List(r.Context(), ac)
 	if err != nil {
 		shared.WriteErr(w, err)
 		return
@@ -52,10 +45,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	ac := middleware.AuthContextFrom(r.Context())
-	if !authz.Can(ac, authz.ActionMemberInvite, &authz.Resource{OrgID: ac.OrgID}) {
-		shared.WriteErr(w, shared.Forbidden())
-		return
-	}
 	var body struct {
 		Email string `json:"email"`
 		Role  string `json:"role"`
@@ -64,10 +53,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		shared.WriteErr(w, shared.Validation("Invalid JSON body."))
 		return
 	}
-	// The raw token is returned to deliver out-of-band (email). There is no mail
-	// transport yet, so it is intentionally dropped here rather than logged or
-	// returned to the browser — wiring email delivery is a later hardening step.
-	inv, _, err := h.svc.Create(r.Context(), ac, CreateInput{Email: body.Email, Role: authz.Role(body.Role)})
+	inv, err := h.svc.Create(r.Context(), ac, CreateInput{Email: body.Email, Role: authz.Role(body.Role)})
 	if err != nil {
 		shared.WriteErr(w, err)
 		return
@@ -77,10 +63,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	ac := middleware.AuthContextFrom(r.Context())
-	if !authz.Can(ac, authz.ActionMemberInvite, &authz.Resource{OrgID: ac.OrgID}) {
-		shared.WriteErr(w, shared.Forbidden())
-		return
-	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		shared.WriteErr(w, shared.NotFound())
