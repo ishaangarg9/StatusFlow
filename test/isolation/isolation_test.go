@@ -177,6 +177,61 @@ func TestUserMembershipsReturnsOnlyCallersRows(t *testing.T) {
 	}
 }
 
+// TestInvitationsAreOrgIsolated proves a pending invitation created in org A is
+// invisible from org B's context even with no app-level org filter, so org B can
+// neither enumerate nor revoke another org's invites. (The token-hash escape
+// hatch in Accept is the only cross-org reader, and it returns just the org_id.)
+func TestInvitationsAreOrgIsolated(t *testing.T) {
+	ctx, pool, s := setup(t)
+
+	invID := uuid.New()
+	err := tenancy.WithOrgTx(ctx, pool, s.orgA, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO invitations (id, org_id, email, role, token_hash, invited_by, expires_at)
+			VALUES ($1, $2, 'iso-invitee@example.com', 'member', $3, $4, now() + interval '1 day')`,
+			invID, s.orgA, "isohash-"+invID.String(), s.userA)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed invitation in org A: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = tenancy.WithOrgTx(cctx, pool, s.orgA, func(tx pgx.Tx) error {
+			_, err := tx.Exec(cctx, `DELETE FROM invitations WHERE id = $1`, invID)
+			return err
+		})
+	})
+
+	// From org B, with NO org filter, the invite must be invisible.
+	var visible int
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgB, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM invitations`).Scan(&visible)
+	}); err != nil {
+		t.Fatalf("count invitations in org B: %v", err)
+	}
+	if visible != 0 {
+		t.Fatalf("org A's invitation leaked into org B's context (saw %d)", visible)
+	}
+
+	// Org B cannot delete (revoke) org A's invite — RLS hides the row, 0 affected.
+	var affected int64
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgB, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, `DELETE FROM invitations WHERE id = $1`, invID)
+		if err != nil {
+			return err
+		}
+		affected = cmd.RowsAffected()
+		return nil
+	}); err != nil {
+		t.Fatalf("attempt revoke from org B: %v", err)
+	}
+	if affected != 0 {
+		t.Fatal("org B was able to delete org A's invitation")
+	}
+}
+
 // TestWriteCheckBlocksCrossOrgInsert confirms WITH CHECK refuses an insert that
 // tries to plant a row in another org while org A is the active tenant.
 func TestWriteCheckBlocksCrossOrgInsert(t *testing.T) {

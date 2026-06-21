@@ -144,8 +144,17 @@ Follow every step — skipping one is how isolation bugs are born.
    an exhaustive permission-matrix test (fails on any `policy.go` drift; a new action
    without a matrix row fails too) and `TestNoInlineRoleChecks` (fails the build if a
    `Role` comparison appears outside `internal/authz/`). Remaining product resources get
-   gated as they're built in Phase 5. **start at Phase 4 next**
-4. **Invitations** — invite by email, accept, join with a role.
+   gated as they're built in Phase 5.
+4. ~~**Invitations** — invite by email, accept, join with a role.~~ **DONE.**
+   Org-scoped issue/list/revoke (gated on `member:invite`; resend via upsert; owner-role
+   invites refused; existing-member refused) and the global `POST /api/invitations/accept`.
+   Accept is the one pre-membership write: the org is found via the locked-down
+   `invitation_org_by_token()` SECURITY DEFINER fn (migration 010), then the join +
+   single-use mark + audit run inside `WithOrgTx` with RLS armed. Invites are CSPRNG
+   tokens stored sha256-hashed, bound to the target email, single-use, and 7-day expiring.
+   Proven by `test/invitations/` (happy path, email-binding 403, expiry/unknown/used 422,
+   already-member/double-accept 409, resend invalidation, revoke) and an invitation
+   cross-tenant case in `test/isolation/`. **start at Phase 5 next**
 5. **Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.
 6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.
 7. **The proof** — cross-tenant isolation tests + authz tests. The case study is built on this.
