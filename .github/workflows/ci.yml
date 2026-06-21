@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Real Postgres so RLS is actually exercised (doc 07 §9).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: statusflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # App connects as the RESTRICTED app_user (created by migration 001).
+      DATABASE_URL: postgres://app_user:devpassword@localhost:5432/statusflow?sslmode=disable
+      # Migrations run as the privileged role.
+      MIGRATIONS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/statusflow?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
+
+      - name: Run migrations (privileged role)
+        run: migrate -path internal/db/migrations -database "$MIGRATIONS_DATABASE_URL" up
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The authz gate: exhaustive permission matrix + no inline role checks
+      # outside internal/authz/ (doc 07 §9.2 and §9.3). No DB needed.
+      - name: Authz gate
+        run: go test ./test/authz/...
+
+      # Full suite, including the cross-tenant isolation proof and the
+      # ownership-invariant regression, against real Postgres as app_user.
+      - name: Test (with RLS, as app_user)
+        run: go test ./...

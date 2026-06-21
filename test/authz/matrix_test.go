@@ -12,43 +12,60 @@ import (
 	"github.com/ishaangarg9/statusflow/internal/authz"
 )
 
+// wantMatrix is the EXHAUSTIVE permission matrix from doc 05 §3, transcribed by
+// hand as the source of truth. The test below asserts Can() reproduces every
+// cell, so any drift in internal/authz/policy.go fails the build.
+//
+// The roles slice per action lists the roles allowed; all others are denied.
+var wantMatrix = map[authz.Action][]authz.Role{
+	authz.ActionOrgRead:         {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
+	authz.ActionOrgUpdate:       {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionOrgDelete:       {authz.RoleOwner},
+	authz.ActionMemberRead:      {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
+	authz.ActionMemberInvite:    {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionMemberRemove:    {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionMemberRole:      {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionMonitorRead:     {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
+	authz.ActionMonitorCreate:   {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember},
+	authz.ActionMonitorUpdate:   {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember},
+	authz.ActionMonitorDelete:   {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionIncidentRead:    {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
+	authz.ActionIncidentCreate:  {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember},
+	authz.ActionIncidentUpdate:  {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember},
+	authz.ActionIncidentResolve: {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember},
+	authz.ActionStatusRead:      {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
+	authz.ActionStatusPublish:   {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionAuditRead:       {authz.RoleOwner, authz.RoleAdmin},
+}
+
 func TestPermissionMatrix(t *testing.T) {
 	org := uuid.New()
 	user := uuid.New()
 
-	cases := []struct {
-		role   authz.Role
-		action authz.Action
-		want   bool
-	}{
-		// Owner can do everything.
-		{authz.RoleOwner, authz.ActionOrgDelete, true},
-		{authz.RoleOwner, authz.ActionAuditRead, true},
-		{authz.RoleOwner, authz.ActionMonitorDelete, true},
-
-		// Admin: full except org:delete.
-		{authz.RoleAdmin, authz.ActionOrgDelete, false},
-		{authz.RoleAdmin, authz.ActionMonitorDelete, true},
-		{authz.RoleAdmin, authz.ActionAuditRead, true},
-
-		// Member: product day-to-day.
-		{authz.RoleMember, authz.ActionMonitorCreate, true},
-		{authz.RoleMember, authz.ActionMonitorDelete, false},
-		{authz.RoleMember, authz.ActionMemberInvite, false},
-		{authz.RoleMember, authz.ActionIncidentResolve, true},
-		{authz.RoleMember, authz.ActionAuditRead, false},
-
-		// Viewer: read-only.
-		{authz.RoleViewer, authz.ActionMonitorRead, true},
-		{authz.RoleViewer, authz.ActionMonitorCreate, false},
-		{authz.RoleViewer, authz.ActionStatusRead, true},
-		{authz.RoleViewer, authz.ActionStatusPublish, false},
+	// Guard: the expected matrix must cover exactly the actions authz exposes,
+	// so adding an Action (to AllActions) without a matrix row fails here rather
+	// than being silently default-denied.
+	if len(wantMatrix) != len(authz.AllActions()) {
+		t.Fatalf("wantMatrix has %d actions but authz.AllActions() has %d — add the new action to the test matrix",
+			len(wantMatrix), len(authz.AllActions()))
 	}
-	for _, c := range cases {
-		ac := authz.AuthContext{UserID: user, OrgID: org, Role: c.role}
-		got := authz.Can(ac, c.action, nil)
-		if got != c.want {
-			t.Errorf("Can(%s, %s) = %v; want %v", c.role, c.action, got, c.want)
+
+	for _, action := range authz.AllActions() {
+		allowed, ok := wantMatrix[action]
+		if !ok {
+			t.Fatalf("action %q missing from wantMatrix", action)
+		}
+		allow := make(map[authz.Role]bool, len(allowed))
+		for _, r := range allowed {
+			allow[r] = true
+		}
+		for _, role := range authz.AllRoles() {
+			ac := authz.AuthContext{UserID: user, OrgID: org, Role: role}
+			got := authz.Can(ac, action, nil)
+			want := allow[role]
+			if got != want {
+				t.Errorf("Can(%s, %s) = %v; want %v", role, action, got, want)
+			}
 		}
 	}
 }

@@ -37,6 +37,27 @@ const (
 	ActionAuditRead Action = "audit:read"
 )
 
+// AllRoles is the canonical list of roles, for exhaustive iteration (tests,
+// admin UIs). Order is highest-to-lowest privilege.
+func AllRoles() []Role {
+	return []Role{RoleOwner, RoleAdmin, RoleMember, RoleViewer}
+}
+
+// AllActions is the canonical list of every gated action. Keep it in sync when
+// adding an Action constant — the permission-matrix test asserts its expected
+// matrix covers exactly this set, so a new action without a matrix entry (and
+// thus default-denied silently) fails the build.
+func AllActions() []Action {
+	return []Action{
+		ActionOrgRead, ActionOrgUpdate, ActionOrgDelete,
+		ActionMemberRead, ActionMemberInvite, ActionMemberRemove, ActionMemberRole,
+		ActionMonitorRead, ActionMonitorCreate, ActionMonitorUpdate, ActionMonitorDelete,
+		ActionIncidentRead, ActionIncidentCreate, ActionIncidentUpdate, ActionIncidentResolve,
+		ActionStatusRead, ActionStatusPublish,
+		ActionAuditRead,
+	}
+}
+
 func set(actions ...Action) map[Action]bool {
 	m := make(map[Action]bool, len(actions))
 	for _, a := range actions {

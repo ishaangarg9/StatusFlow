@@ -137,9 +137,14 @@ Follow every step — skipping one is how isolation bugs are born.
    atomic ownership transfer + owner-protection, audit read+write, `/me` cross-org
    listing via the `user_memberships()` SECURITY DEFINER fn (migration 008), and the
    cross-tenant isolation proof in `test/isolation/`. RLS was already on from migration 006.
-3. **Roles** — the four roles + `Can()`; gate actions. *(largely in place: `authz.Can` +
-   matrix + structural guards exist and are wired into orgs/memberships/audit handlers;
-   remaining product resources get gated as they're built in Phase 5.)* **start here next**
+3. ~~**Roles** — the four roles + `Can()`; gate actions.~~ **DONE.**
+   `authz.Can` + the doc-05 matrix + structural guards (owner-only delete, ownership
+   transfer, owner-protection, cross-org) are wired into every real org-scoped handler
+   (orgs/memberships/audit). Enforcement is proven by the CI gate (`.github/workflows/ci.yml`):
+   an exhaustive permission-matrix test (fails on any `policy.go` drift; a new action
+   without a matrix row fails too) and `TestNoInlineRoleChecks` (fails the build if a
+   `Role` comparison appears outside `internal/authz/`). Remaining product resources get
+   gated as they're built in Phase 5. **start at Phase 4 next**
 4. **Invitations** — invite by email, accept, join with a role.
 5. **Product** — monitors, the worker (`SKIP LOCKED`), incidents, public status page.
 6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.
