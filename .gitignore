@@ -19,3 +19,7 @@ web/next-env.d.ts
 # IDE
 .vscode/
 .idea/
+
+# Local-only design docs, case study, and working notes (kept on disk, not shipped)
+/[0-9][0-9]-*.md
+context-summary.md

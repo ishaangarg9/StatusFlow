@@ -205,10 +205,15 @@ Follow every step — skipping one is how isolation bugs are born.
    **never persisted** (`token_hash` is nullable until delivery). Proven by
    `test/audit/`, `test/sessions/`, `internal/worker/` (SSRF + lease), and the async
    delivery + `invitation_outbox` cross-tenant cases in `test/invitations/`/`test/isolation/`.
-   **start at Phase 7 next.**
-7. **The proof** — cross-tenant isolation tests + authz tests. The case study is built on this.
-   (Ongoing throughout — each phase added its isolation + authz cases. Phase 7 is the
-   consolidation/write-up of that proof into the case study.)
+7. ~~**The proof** — cross-tenant isolation tests + authz tests. The case study is built on this.~~ **DONE.**
+   Coverage audit closed the gaps so **every** tenant-owned table now has a direct
+   cross-tenant case (Phase 7 added `organizations`, `memberships`, `incident_updates`,
+   `status_page_monitors`, `audit_logs` in `test/isolation/coverage_isolation_test.go`;
+   the rest were already covered). The authz matrix is exhaustive + self-policing
+   (`test/authz/`), and CI already stands up real Postgres and runs the full RLS +
+   authz suite on every push/PR. The consolidated write-up is `08-case-study.md`
+   (linked from the README index): the claim, the four-layer defense, the per-table
+   isolation + authz evidence map, and how to run the proof. **Build path complete.**
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 
