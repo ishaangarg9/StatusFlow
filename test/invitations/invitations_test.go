@@ -15,6 +15,7 @@ package invitations_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -35,8 +36,10 @@ import (
 
 // captureMailer is the test transport: it records the raw token per recipient so
 // tests can drive Accept exactly as a real invitee would after receiving the
-// email. This replaces the old "Create returns the token" shortcut and proves
-// the token actually flows through the Mailer.
+// email. Delivery is asynchronous now — Create only enqueues; the worker's
+// Deliverer mints the token and calls this transport. The harness drains the
+// outbox (f.deliver) after each Create to capture the token the worker would
+// have mailed.
 type captureMailer struct {
 	mu   sync.Mutex
 	sent map[string]string // lower(email) -> last raw token
@@ -61,6 +64,7 @@ func (m *captureMailer) tokenFor(email string) string {
 type fixture struct {
 	pool       *pgxpool.Pool
 	svc        *invitations.Service
+	deliverer  *invitations.Deliverer
 	mail       *captureMailer
 	org        uuid.UUID
 	owner      uuid.UUID // alice, owner of org
@@ -85,9 +89,11 @@ func setup(t *testing.T) (context.Context, fixture) {
 	ownerEml := "inv-" + suffix + "-alice@example.com"
 	inviteeEml := "inv-" + suffix + "-grace@example.com"
 	mail := &captureMailer{}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	f := fixture{
 		pool:       pool,
-		svc:        invitations.NewService(pool, mail),
+		svc:        invitations.NewService(pool),
+		deliverer:  invitations.NewDeliverer(pool, mail, log),
 		mail:       mail,
 		org:        uuid.New(),
 		owner:      uuid.New(),
@@ -139,17 +145,20 @@ func (f fixture) ownerAC() authz.AuthContext {
 	return authz.AuthContext{UserID: f.owner, OrgID: f.org, Role: authz.RoleOwner}
 }
 
-// invite issues an invitation as the owner and returns the view plus the raw
-// token captured by the test mailer.
+// invite issues an invitation as the owner, drains the delivery outbox (the
+// worker's job), and returns the view plus the raw token the transport received.
 func (f fixture) invite(ctx context.Context, t *testing.T, email string, role authz.Role) (*invitations.InvitationView, string) {
 	t.Helper()
 	inv, err := f.svc.Create(ctx, f.ownerAC(), invitations.CreateInput{Email: email, Role: role})
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
+	if _, err := f.deliverer.DrainOnce(ctx, 50, 60); err != nil {
+		t.Fatalf("drain outbox: %v", err)
+	}
 	token := f.mail.tokenFor(email)
 	if token == "" {
-		t.Fatal("mailer did not receive a raw token")
+		t.Fatal("mailer did not receive a raw token after draining the outbox")
 	}
 	return inv, token
 }
@@ -391,6 +400,70 @@ func TestManagementEndpointsDenyLowRoles(t *testing.T) {
 			t.Errorf("%s revoke = %v, want 403", role, err)
 		}
 	}
+}
+
+// Delivery is asynchronous and tokenless-at-rest: Create enqueues an outbox row
+// and leaves token_hash NULL (nothing secret persisted); draining mints the
+// token, stores only its hash (matching the mailed raw token), and removes the
+// outbox row.
+func TestCreateEnqueuesAndDrainDelivers(t *testing.T) {
+	ctx, f := setup(t)
+
+	inv, err := f.svc.Create(ctx, f.ownerAC(),
+		invitations.CreateInput{Email: f.inviteeEml, Role: authz.RoleMember})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Pre-drain: no token yet, exactly one queued delivery.
+	hash, outbox := f.inviteState(ctx, t, inv.ID)
+	if hash != nil {
+		t.Fatal("token_hash must be NULL before delivery (no secret at rest)")
+	}
+	if outbox != 1 {
+		t.Fatalf("expected 1 queued outbox row, got %d", outbox)
+	}
+	if f.mail.tokenFor(f.inviteeEml) != "" {
+		t.Fatal("nothing should have been mailed before draining")
+	}
+
+	if _, err := f.deliverer.DrainOnce(ctx, 50, 60); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	// Post-drain: token mailed, its hash stored, outbox row gone.
+	token := f.mail.tokenFor(f.inviteeEml)
+	if token == "" {
+		t.Fatal("expected a token to be mailed after draining")
+	}
+	hash, outbox = f.inviteState(ctx, t, inv.ID)
+	if hash == nil || *hash != auth.HashToken(token) {
+		t.Fatal("stored token_hash must match the mailed token's hash")
+	}
+	if outbox != 0 {
+		t.Fatalf("outbox row should be removed after delivery, found %d", outbox)
+	}
+}
+
+// inviteState returns the invitation's token_hash (nil when NULL) and the count
+// of its outbox rows.
+func (f fixture) inviteState(ctx context.Context, t *testing.T, id uuid.UUID) (*string, int) {
+	t.Helper()
+	var hash *string
+	var outbox int
+	if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx,
+			`SELECT token_hash FROM invitations WHERE org_id = $1 AND id = $2`,
+			f.org, id).Scan(&hash); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx,
+			`SELECT count(*) FROM invitation_outbox WHERE org_id = $1 AND invitation_id = $2`,
+			f.org, id).Scan(&outbox)
+	}); err != nil {
+		t.Fatalf("read invite state: %v", err)
+	}
+	return hash, outbox
 }
 
 // owner and admin may manage invitations (list succeeds for both).

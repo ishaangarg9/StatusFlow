@@ -21,6 +21,7 @@ type Worker struct {
 	leaseSeconds int
 	pinger       *Pinger
 	incidents    *IncidentEngine
+	drainInvites func(context.Context) (int, error)
 }
 
 type Config struct {
@@ -30,6 +31,11 @@ type Config struct {
 	ClaimLeaseSeconds        int
 	IncidentOpenThreshold    int
 	IncidentResolveThreshold int
+	// DrainInvitations, when set, is called once per tick to deliver queued
+	// invitations. Injected as a callback (rather than importing the invitations
+	// domain here) so the worker stays a generic scheduler. Wired in cmd/worker
+	// to invitations.Deliverer.DrainOnce.
+	DrainInvitations func(context.Context) (int, error)
 }
 
 func New(pool *pgxpool.Pool, log *slog.Logger, cfg Config) *Worker {
@@ -46,6 +52,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger, cfg Config) *Worker {
 		leaseSeconds: lease,
 		pinger:       NewPinger(),
 		incidents:    NewIncidentEngine(cfg.IncidentOpenThreshold, cfg.IncidentResolveThreshold),
+		drainInvites: cfg.DrainInvitations,
 	}
 }
 
@@ -62,6 +69,13 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
+			if w.drainInvites != nil {
+				if n, err := w.drainInvites(ctx); err != nil {
+					w.log.Error("drain invitations", "err", err)
+				} else if n > 0 {
+					w.log.Info("delivered invitations", "count", n)
+				}
+			}
 			monitors, err := w.claimDue(ctx, w.batch, w.leaseSeconds)
 			if err != nil {
 				w.log.Error("claim", "err", err)

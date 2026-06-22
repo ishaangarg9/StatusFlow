@@ -28,12 +28,11 @@ const inviteTTL = 7 * 24 * time.Hour
 // the SECURITY DEFINER invitation_org_by_token() escape hatch and the mutation
 // then runs org-scoped.
 type Service struct {
-	pool   *pgxpool.Pool
-	mailer Mailer
+	pool *pgxpool.Pool
 }
 
-func NewService(pool *pgxpool.Pool, mailer Mailer) *Service {
-	return &Service{pool: pool, mailer: mailer}
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool}
 }
 
 // InvitationView is the non-secret projection. The raw token is NEVER part of
@@ -58,18 +57,20 @@ type CreateInput struct {
 	Role  authz.Role
 }
 
-// Create issues (or re-issues) an invitation for email at role and delivers the
-// accept link via the Mailer. The raw token never leaves the service: it is
-// minted here, stored only as a sha256 hash, and handed to the Mailer — it is
-// neither returned to the caller nor logged (CLAUDE.md §6).
+// Create issues (or re-issues) an invitation for email at role and ENQUEUES it
+// for delivery; the worker (invitations.Deliverer) mints the token and sends the
+// mail asynchronously. Nothing secret is produced here — the invitation is
+// stored with token_hash = NULL until the worker delivers it — so there is no
+// token to return or log (CLAUDE.md §6). Because delivery is out of band, a mail
+// failure can no longer fail this request after the row has committed.
 //
 // Authorization (member:invite → owner/admin) is enforced here. The service
 // additionally refuses to invite at the owner role (ownership is a transfer-only
 // flow that must keep the single-owner invariant intact).
 //
 // On conflict with an existing pending invite for the same (org, email), the
-// invite is re-issued (new token, fresh expiry) — a resend. An email that
-// already belongs to a member is rejected as 409.
+// invite is re-issued (token cleared, fresh expiry) and its delivery re-queued —
+// a resend. An email that already belongs to a member is rejected as 409.
 func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInput) (*InvitationView, error) {
 	if !authz.Can(ac, authz.ActionMemberInvite, &authz.Resource{OrgID: ac.OrgID}) {
 		return nil, shared.Forbidden()
@@ -87,15 +88,10 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 		return nil, shared.Validation("Role must be one of: admin, member, viewer.")
 	}
 
-	rawToken, err := auth.NewSessionToken()
-	if err != nil {
-		return nil, shared.Internal(err)
-	}
-	tokenHash := auth.HashToken(rawToken)
 	expiresAt := time.Now().Add(inviteTTL)
 
 	var v InvitationView
-	err = tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
+	err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
 		// Reject inviting someone who is already a member of this org. The join
 		// to users is constrained to current_org() by RLS on memberships.
 		var exists bool
@@ -111,26 +107,38 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 			return shared.Conflict("That person is already a member of this organization.")
 		}
 
-		// Upsert: a fresh invite for a new email, or a resend (new token, reset
-		// expiry/acceptance) for an existing pending one. created_at is left
-		// untouched on resend so the first-invited time is preserved; updated_at
-		// is not tracked on this table.
+		// Upsert: a fresh invite for a new email, or a resend (token cleared, reset
+		// expiry/acceptance) for an existing pending one. token_hash is set to
+		// NULL — the worker mints it at delivery. created_at is left untouched on
+		// resend so the first-invited time is preserved.
 		var roleStr string
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO invitations (org_id, email, role, token_hash, invited_by, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			VALUES ($1, $2, $3, NULL, $4, $5)
 			ON CONFLICT (org_id, email) DO UPDATE
 			SET role = EXCLUDED.role,
-			    token_hash = EXCLUDED.token_hash,
+			    token_hash = NULL,
 			    invited_by = EXCLUDED.invited_by,
 			    expires_at = EXCLUDED.expires_at,
 			    accepted_at = NULL
 			RETURNING id, email, role, expires_at, created_at`,
-			ac.OrgID, email, string(role), tokenHash, ac.UserID, expiresAt,
+			ac.OrgID, email, string(role), ac.UserID, expiresAt,
 		).Scan(&v.ID, &v.Email, &roleStr, &v.ExpiresAt, &v.CreatedAt); err != nil {
 			return err
 		}
 		v.Role = authz.Role(roleStr)
+
+		// Enqueue delivery in the SAME tx, so an issued invite is always queued
+		// (no committed-but-unqueued window). A resend re-arms the existing row:
+		// reset attempts and make it due now.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO invitation_outbox (org_id, invitation_id)
+			VALUES ($1, $2)
+			ON CONFLICT (invitation_id) DO UPDATE
+			SET attempts = 0, next_attempt_at = now(), last_error = NULL`,
+			ac.OrgID, v.ID); err != nil {
+			return err
+		}
 
 		return audit.Record(ctx, tx, audit.Entry{
 			OrgID:        ac.OrgID,
@@ -143,15 +151,6 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 	})
 	if err != nil {
 		return nil, shared.MapAppErr(err)
-	}
-
-	// Deliver out-of-band, after the row is committed. A delivery failure leaves
-	// a valid invitation in place; the admin can resend (which re-issues a fresh
-	// token). We surface it as a 500 so the client knows delivery did not happen.
-	if err := s.mailer.SendInvitation(ctx, Invite{
-		To: v.Email, RawToken: rawToken, OrgID: ac.OrgID, Role: v.Role, ExpiresAt: v.ExpiresAt,
-	}); err != nil {
-		return nil, shared.Internal(err)
 	}
 	return &v, nil
 }

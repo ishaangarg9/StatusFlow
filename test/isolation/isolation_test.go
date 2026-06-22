@@ -232,6 +232,58 @@ func TestInvitationsAreOrgIsolated(t *testing.T) {
 	}
 }
 
+// TestInvitationOutboxIsOrgIsolated proves the new tenant table from Phase 6
+// (invitation delivery queue) obeys RLS: org A's queued deliveries are invisible
+// from org B, and WITH CHECK refuses planting an outbox row in org B from org A.
+func TestInvitationOutboxIsOrgIsolated(t *testing.T) {
+	ctx, pool, s := setup(t)
+
+	invID := uuid.New()
+	err := tenancy.WithOrgTx(ctx, pool, s.orgA, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO invitations (id, org_id, email, role, invited_by, expires_at)
+			VALUES ($1, $2, 'iso-outbox@example.com', 'member', $3, now() + interval '1 day')`,
+			invID, s.orgA, s.userA); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO invitation_outbox (org_id, invitation_id) VALUES ($1, $2)`, s.orgA, invID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed outbox in org A: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = tenancy.WithOrgTx(cctx, pool, s.orgA, func(tx pgx.Tx) error {
+			_, err := tx.Exec(cctx, `DELETE FROM invitations WHERE id = $1`, invID) // cascades to outbox
+			return err
+		})
+	})
+
+	// Org B sees none of org A's deliveries.
+	var visible int
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgB, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM invitation_outbox`).Scan(&visible)
+	}); err != nil {
+		t.Fatalf("count outbox in org B: %v", err)
+	}
+	if visible != 0 {
+		t.Fatalf("org A's outbox rows leaked into org B (saw %d)", visible)
+	}
+
+	// WITH CHECK refuses planting an outbox row in org A while org B is active.
+	werr := tenancy.WithOrgTx(ctx, pool, s.orgB, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO invitation_outbox (org_id, invitation_id) VALUES ($1, $2)`, s.orgA, invID)
+		return err
+	})
+	if werr == nil {
+		t.Fatal("org B planted an outbox row into org A (WITH CHECK failed)")
+	}
+}
+
 // TestWriteCheckBlocksCrossOrgInsert confirms WITH CHECK refuses an insert that
 // tries to plant a row in another org while org A is the active tenant.
 func TestWriteCheckBlocksCrossOrgInsert(t *testing.T) {
