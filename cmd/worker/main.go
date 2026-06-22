@@ -38,6 +38,7 @@ func main() {
 		Tick:                     cfg.WorkerTick,
 		Batch:                    cfg.WorkerBatch,
 		Concurrency:              cfg.WorkerConcurrency,
+		ClaimLeaseSeconds:        cfg.WorkerClaimLeaseSeconds,
 		IncidentOpenThreshold:    cfg.IncidentOpenThreshold,
 		IncidentResolveThreshold: cfg.IncidentResolveThreshold,
 	})

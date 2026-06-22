@@ -16,9 +16,10 @@ type Config struct {
 	SessionCookieName   string
 	SessionCookieSecure bool
 
-	WorkerTick        time.Duration
-	WorkerBatch       int
-	WorkerConcurrency int
+	WorkerTick              time.Duration
+	WorkerBatch             int
+	WorkerConcurrency       int
+	WorkerClaimLeaseSeconds int
 
 	IncidentOpenThreshold    int
 	IncidentResolveThreshold int
@@ -77,6 +78,7 @@ func LoadConfig() (*Config, error) {
 		WorkerTick:               time.Duration(optInt("WORKER_TICK_MS", 5000)) * time.Millisecond,
 		WorkerBatch:              optInt("WORKER_BATCH", 50),
 		WorkerConcurrency:        optInt("WORKER_CONCURRENCY", 20),
+		WorkerClaimLeaseSeconds:  optInt("WORKER_CLAIM_LEASE_SECONDS", 90),
 		IncidentOpenThreshold:    optInt("INCIDENT_OPEN_THRESHOLD", 2),
 		IncidentResolveThreshold: optInt("INCIDENT_RESOLVE_THRESHOLD", 2),
 		RateLimitLoginPerMin:     optInt("RATE_LIMIT_LOGIN_PER_MIN", 10),

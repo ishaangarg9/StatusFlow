@@ -13,32 +13,39 @@ import (
 )
 
 type Worker struct {
-	pool        *pgxpool.Pool
-	log         *slog.Logger
-	tick        time.Duration
-	batch       int
-	concurrency int
-	pinger      *Pinger
-	incidents   *IncidentEngine
+	pool         *pgxpool.Pool
+	log          *slog.Logger
+	tick         time.Duration
+	batch        int
+	concurrency  int
+	leaseSeconds int
+	pinger       *Pinger
+	incidents    *IncidentEngine
 }
 
 type Config struct {
 	Tick                     time.Duration
 	Batch                    int
 	Concurrency              int
+	ClaimLeaseSeconds        int
 	IncidentOpenThreshold    int
 	IncidentResolveThreshold int
 }
 
 func New(pool *pgxpool.Pool, log *slog.Logger, cfg Config) *Worker {
+	lease := cfg.ClaimLeaseSeconds
+	if lease <= 0 {
+		lease = 90
+	}
 	return &Worker{
-		pool:        pool,
-		log:         log,
-		tick:        cfg.Tick,
-		batch:       cfg.Batch,
-		concurrency: cfg.Concurrency,
-		pinger:      NewPinger(),
-		incidents:   NewIncidentEngine(cfg.IncidentOpenThreshold, cfg.IncidentResolveThreshold),
+		pool:         pool,
+		log:          log,
+		tick:         cfg.Tick,
+		batch:        cfg.Batch,
+		concurrency:  cfg.Concurrency,
+		leaseSeconds: lease,
+		pinger:       NewPinger(),
+		incidents:    NewIncidentEngine(cfg.IncidentOpenThreshold, cfg.IncidentResolveThreshold),
 	}
 }
 
@@ -55,7 +62,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			monitors, err := w.claimDue(ctx, w.batch)
+			monitors, err := w.claimDue(ctx, w.batch, w.leaseSeconds)
 			if err != nil {
 				w.log.Error("claim", "err", err)
 				continue

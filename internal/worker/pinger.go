@@ -120,9 +120,12 @@ func (p *Pinger) Check(ctx context.Context, m Monitor) CheckResult {
 }
 
 // runCheck runs one HTTP check and persists it under the monitor's org. The
-// claim already rescheduled next_check_at, so this only records the result and
-// lets the incident engine open/resolve as the streak warrants — all inside one
-// WithOrgTx so RLS is armed and the check + any incident change commit together.
+// claim set only a short lease on next_check_at; this records the result, lets
+// the incident engine open/resolve as the streak warrants, AND advances
+// next_check_at to the real interval — all inside one WithOrgTx so RLS is armed
+// and the result, any incident change, and the reschedule commit together.
+// Until that commit lands the monitor still carries the lease, so a crash here
+// re-checks it after the lease rather than losing the tick for a full interval.
 func (w *Worker) runCheck(ctx context.Context, m Monitor) {
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(m.TimeoutMs)*time.Millisecond)
 	defer cancel()
@@ -150,16 +153,27 @@ func (w *Worker) runCheck(ctx context.Context, m Monitor) {
 			m.OrgID, m.ID, res.Status, statusCode, latency, errMsg); err != nil {
 			return err
 		}
-		return w.incidents.Apply(ctx, tx, m.OrgID, m.ID, res.Status)
+		if err := w.incidents.Apply(ctx, tx, m.OrgID, m.ID, res.Status); err != nil {
+			return err
+		}
+		// Result is durably recorded: replace the claim lease with the real next
+		// check. Skip paused monitors so we don't resurrect a monitor an admin
+		// paused mid-check.
+		_, err := tx.Exec(ctx, `
+			UPDATE monitors
+			SET next_check_at = now() + make_interval(secs => interval_seconds)
+			WHERE org_id = $1 AND id = $2 AND is_paused = false`,
+			m.OrgID, m.ID)
+		return err
 	})
 	if err != nil {
 		w.log.Error("persist check", "monitor", m.ID, "org", m.OrgID, "err", err)
-		// The claim already pushed next_check_at a full interval forward, so a
-		// failed persist would otherwise silently drop this tick's observation
-		// and skip the monitor for an entire interval. Best-effort: pull
-		// next_check_at back to now so the next tick re-checks promptly. Uses a
-		// detached, short-lived context so this still runs when the failure was
-		// the parent ctx being cancelled (shutdown).
+		// The persist failed, so next_check_at still holds the claim lease (tens
+		// of seconds out). We KNOW this tick failed, so don't wait the whole
+		// lease: best-effort pull next_check_at back to now for a prompt retry.
+		// Detached, short-lived context so this still runs when the failure was
+		// the parent ctx being cancelled (shutdown). A crash before this line is
+		// covered by the lease expiring on its own.
 		w.rescheduleSoon(m)
 	}
 }

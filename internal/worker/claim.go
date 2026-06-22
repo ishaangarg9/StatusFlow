@@ -25,14 +25,17 @@ type Monitor struct {
 // public_status_page_org).
 //
 // The function atomically pushes each claimed monitor's next_check_at into the
-// future, so a row is invisible to a concurrent worker the moment it is claimed.
-// FOR UPDATE SKIP LOCKED inside the function guarantees N instances never claim
-// the same monitor. It is a single auto-committed statement here — no explicit
-// transaction, no lock held across the (potentially slow) HTTP check.
-func (w *Worker) claimDue(ctx context.Context, limit int) ([]Monitor, error) {
+// future by a SHORT lease (not the full interval), so a row is invisible to a
+// concurrent worker the moment it is claimed. FOR UPDATE SKIP LOCKED inside the
+// function guarantees N instances never claim the same monitor. It is a single
+// auto-committed statement here — no explicit transaction, no lock held across
+// the (potentially slow) HTTP check. runCheck resets next_check_at to the real
+// interval once the result is durably persisted; if the worker dies before
+// that, the lease expires and the monitor is re-claimed (the lease is the reaper).
+func (w *Worker) claimDue(ctx context.Context, limit, leaseSeconds int) ([]Monitor, error) {
 	rows, err := w.pool.Query(ctx, `
 		SELECT id, org_id, url, method, timeout_ms, interval_seconds, expected_status
-		FROM claim_due_monitors($1)`, limit)
+		FROM claim_due_monitors($1, $2)`, limit, leaseSeconds)
 	if err != nil {
 		return nil, err
 	}
