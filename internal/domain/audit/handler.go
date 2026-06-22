@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/ishaangarg9/statusflow/internal/authz"
 	"github.com/ishaangarg9/statusflow/internal/http/middleware"
@@ -29,11 +30,25 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		shared.WriteErr(w, shared.Forbidden())
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := h.svc.List(r.Context(), ac.OrgID, limit)
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	params := ListParams{
+		Limit:  limit,
+		Action: q.Get("action"),
+		Cursor: q.Get("cursor"),
+	}
+	if a := q.Get("actor"); a != "" {
+		id, err := uuid.Parse(a)
+		if err != nil {
+			shared.WriteErr(w, shared.Validation("Invalid actor id."))
+			return
+		}
+		params.Actor = &id
+	}
+	page, err := h.svc.List(r.Context(), ac.OrgID, params)
 	if err != nil {
 		shared.WriteErr(w, err)
 		return
 	}
-	shared.WriteJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	shared.WriteJSON(w, http.StatusOK, page)
 }
