@@ -259,17 +259,18 @@ func (s *Service) Accept(ctx context.Context, user *auth.User, rawToken string) 
 		// Authoritative, race-free re-read under RLS. FOR UPDATE serializes
 		// concurrent accepts of the same invite.
 		var (
+			invID      uuid.UUID
 			email      string
 			roleStr    string
 			expiresAt  time.Time
 			acceptedAt *time.Time
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT email, role, expires_at, accepted_at
+			SELECT id, email, role, expires_at, accepted_at
 			FROM invitations
 			WHERE org_id = $1 AND token_hash = $2
 			FOR UPDATE`, orgID, tokenHash,
-		).Scan(&email, &roleStr, &expiresAt, &acceptedAt)
+		).Scan(&invID, &email, &roleStr, &expiresAt, &acceptedAt)
 		if err != nil {
 			return err // ErrNoRows -> 422 via mapping below
 		}
@@ -302,6 +303,15 @@ func (s *Service) Accept(ctx context.Context, user *auth.User, rawToken string) 
 		if _, err := tx.Exec(ctx,
 			`UPDATE invitations SET accepted_at = now() WHERE org_id = $1 AND token_hash = $2`,
 			orgID, tokenHash); err != nil {
+			return err
+		}
+
+		// Drop any pending delivery for this invite so the worker never re-mints a
+		// token for an org the user has now joined. Normally already gone (delivery
+		// deletes it on send); this covers the deleteOutbox-failed edge.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM invitation_outbox WHERE org_id = $1 AND invitation_id = $2`,
+			orgID, invID); err != nil {
 			return err
 		}
 

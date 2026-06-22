@@ -181,6 +181,37 @@ func TestAuditFilter_Actor(t *testing.T) {
 	}
 }
 
+// A cursor is bound to the filter set that produced it; replaying it under a
+// different filter is rejected (422) rather than silently returning a wrong page.
+func TestAuditCursorRejectsFilterMismatch(t *testing.T) {
+	ctx, f := setup(t)
+	for range 3 {
+		f.write(ctx, t, "monitor:create", f.user)
+	}
+	f.write(ctx, t, "monitor:delete", f.user)
+
+	// Page 1 under the monitor:create filter yields a cursor.
+	page, err := f.svc.List(ctx, f.org, audit.ListParams{Limit: 2, Action: "monitor:create"})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("expected a next cursor for a 3-row filtered result with limit 2")
+	}
+
+	// Replaying that cursor under a different action filter must be refused.
+	_, err = f.svc.List(ctx, f.org, audit.ListParams{Limit: 2, Action: "monitor:delete", Cursor: page.NextCursor})
+	var ae *shared.AppError
+	if !errors.As(err, &ae) || ae.Status != 422 {
+		t.Fatalf("expected 422 for a cursor reused under a different filter, got %v", err)
+	}
+
+	// The same cursor under the SAME filter still works.
+	if _, err := f.svc.List(ctx, f.org, audit.ListParams{Limit: 2, Action: "monitor:create", Cursor: page.NextCursor}); err != nil {
+		t.Fatalf("cursor under matching filter should work: %v", err)
+	}
+}
+
 func TestAuditInvalidCursor(t *testing.T) {
 	ctx, f := setup(t)
 	_, err := f.svc.List(ctx, f.org, audit.ListParams{Cursor: "not-a-valid-cursor!!"})

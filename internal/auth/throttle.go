@@ -22,9 +22,10 @@ type LoginThrottle struct {
 	max    int
 	window time.Duration
 
-	mu   sync.Mutex
-	hits map[string]*failCounter
-	now  func() time.Time // injectable for tests
+	mu        sync.Mutex
+	hits      map[string]*failCounter
+	nextSweep time.Time
+	now       func() time.Time // injectable for tests
 }
 
 type failCounter struct {
@@ -48,16 +49,35 @@ func NewLoginThrottle(max int, window time.Duration) *LoginThrottle {
 	}
 }
 
+// sweepLocked drops every counter whose window has fully elapsed. The key space
+// is attacker-controlled (Fail is called for unknown emails too), so without
+// this the map would grow without bound under a spray of distinct keys that are
+// never revisited — turning the anti-DoS throttle into a memory-DoS. We sweep at
+// most once per window so the O(n) scan is amortized to nothing. Caller holds mu.
+func (t *LoginThrottle) sweepLocked(now time.Time) {
+	if now.Before(t.nextSweep) {
+		return
+	}
+	for k, fc := range t.hits {
+		if now.Sub(fc.windowStart) >= t.window {
+			delete(t.hits, k)
+		}
+	}
+	t.nextSweep = now.Add(t.window)
+}
+
 // Allowed reports whether another attempt is permitted for key right now. A
 // window that has fully elapsed resets the counter lazily.
 func (t *LoginThrottle) Allowed(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.now()
+	t.sweepLocked(now)
 	fc := t.hits[key]
 	if fc == nil {
 		return true
 	}
-	if t.now().Sub(fc.windowStart) >= t.window {
+	if now.Sub(fc.windowStart) >= t.window {
 		delete(t.hits, key)
 		return true
 	}
@@ -70,12 +90,20 @@ func (t *LoginThrottle) Fail(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
+	t.sweepLocked(now)
 	fc := t.hits[key]
 	if fc == nil || now.Sub(fc.windowStart) >= t.window {
 		t.hits[key] = &failCounter{count: 1, windowStart: now}
 		return
 	}
 	fc.count++
+}
+
+// Len reports the number of tracked keys (for tests/observability).
+func (t *LoginThrottle) Len() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.hits)
 }
 
 // Reset clears the counter for key. Call it on a successful login so a user who

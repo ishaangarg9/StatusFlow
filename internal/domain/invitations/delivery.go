@@ -19,6 +19,10 @@ import (
 // delivery — so giving up only stops the worker from looping on a dead address.
 const maxDeliveryAttempts = 8
 
+// sendTimeout bounds a single Mailer.SendInvitation call so a hung transport
+// can't wedge the drain (and, through it, the worker tick) indefinitely.
+const sendTimeout = 15 * time.Second
+
 // Deliverer drains the invitation_outbox: for each due row it mints the accept
 // token, records only its hash on the invitation, and hands the raw token to the
 // Mailer. The raw token is generated here and never persisted, so it exists only
@@ -107,21 +111,23 @@ func (d *Deliverer) process(ctx context.Context, c claimedDelivery) bool {
 		return false
 	}
 	hash := auth.HashToken(raw)
-	err = tenancy.WithOrgTx(ctx, d.pool, c.orgID, func(tx pgx.Tx) error {
+	if err := d.withOrg(ctx, c, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE invitations SET token_hash = $1
 			 WHERE org_id = $2 AND id = $3 AND accepted_at IS NULL`,
 			hash, c.orgID, c.invitationID)
 		return err
-	})
-	if err != nil {
+	}); err != nil {
 		d.recordError(ctx, c, "store hash: "+err.Error())
 		return false
 	}
 
-	// Hand the raw token to the transport. This is the ONLY place it leaves the
+	// Hand the raw token to the transport, with a bounded deadline so a hung
+	// transport can't wedge the drain. This is the ONLY place the token leaves the
 	// process; it is never persisted or logged.
-	if err := d.mailer.SendInvitation(ctx, Invite{
+	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := d.mailer.SendInvitation(sctx, Invite{
 		To: c.email, RawToken: raw, OrgID: c.orgID, Role: authz.Role(c.role), ExpiresAt: c.expiresAt,
 	}); err != nil {
 		d.recordError(ctx, c, "send: "+err.Error())
@@ -132,8 +138,14 @@ func (d *Deliverer) process(ctx context.Context, c claimedDelivery) bool {
 	return true
 }
 
+// withOrg runs fn inside tenancy.WithOrgTx pinned to the delivery's org (RLS
+// armed). Shared by the per-row writes below so the tx scaffolding isn't repeated.
+func (d *Deliverer) withOrg(ctx context.Context, c claimedDelivery, fn func(pgx.Tx) error) error {
+	return tenancy.WithOrgTx(ctx, d.pool, c.orgID, fn)
+}
+
 func (d *Deliverer) deleteOutbox(ctx context.Context, c claimedDelivery) {
-	if err := tenancy.WithOrgTx(ctx, d.pool, c.orgID, func(tx pgx.Tx) error {
+	if err := d.withOrg(ctx, c, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `DELETE FROM invitation_outbox WHERE org_id = $1 AND id = $2`,
 			c.orgID, c.outboxID)
 		return err
@@ -148,7 +160,7 @@ func (d *Deliverer) deleteOutbox(ctx context.Context, c claimedDelivery) {
 // next_attempt_at (the retry lease) and attempts, so this only annotates.
 func (d *Deliverer) recordError(ctx context.Context, c claimedDelivery, msg string) {
 	d.log.Warn("invitation delivery failed", "invitation", c.invitationID, "org", c.orgID, "attempt", c.attempts, "err", msg)
-	if err := tenancy.WithOrgTx(ctx, d.pool, c.orgID, func(tx pgx.Tx) error {
+	if err := d.withOrg(ctx, c, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE invitation_outbox SET last_error = $1 WHERE org_id = $2 AND id = $3`,
 			msg, c.orgID, c.outboxID)
 		return err

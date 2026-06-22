@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,37 +66,44 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, p ListParams) (*Pag
 		limit = 200
 	}
 
-	// Build the WHERE incrementally so unset filters add no predicate.
+	// A cursor is only valid for the filter set that produced it; the signature
+	// is embedded in the cursor and rechecked below so a cursor replayed under
+	// different filters is rejected rather than silently mixing pages.
+	sig := filterSig(p)
+
+	// Build the WHERE incrementally so unset filters add no predicate. ph() owns
+	// placeholder numbering so every predicate uses the same scheme.
 	args := []any{orgID}
 	conds := []string{"a.org_id = $1"}
-	add := func(cond string, val any) {
-		args = append(args, val)
-		conds = append(conds, fmt.Sprintf(cond, len(args)))
+	ph := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
 	}
 	if p.Action != "" {
-		add("a.action = $%d", p.Action)
+		conds = append(conds, "a.action = "+ph(p.Action))
 	}
 	if p.Actor != nil {
-		add("a.actor_user_id = $%d", *p.Actor)
+		conds = append(conds, "a.actor_user_id = "+ph(*p.Actor))
 	}
 	if p.Cursor != "" {
-		ct, cid, err := decodeCursor(p.Cursor)
+		ct, cid, csig, err := decodeCursor(p.Cursor)
 		if err != nil {
 			return nil, shared.Validation("Invalid cursor.")
 		}
+		if csig != sig {
+			return nil, shared.Validation("Cursor does not match the current filters.")
+		}
 		// Strictly older than the cursor row in (created_at, id) order.
-		args = append(args, ct, cid)
-		conds = append(conds, fmt.Sprintf("(a.created_at, a.id) < ($%d, $%d)", len(args)-1, len(args)))
+		conds = append(conds, "(a.created_at, a.id) < ("+ph(ct)+", "+ph(cid)+")")
 	}
 	// Fetch one extra row to learn whether a further page exists.
-	args = append(args, limit+1)
 	q := fmt.Sprintf(`
 		SELECT a.id, u.email, a.action, a.resource_type, a.resource_id, a.created_at
 		FROM audit_logs a
 		LEFT JOIN users u ON u.id = a.actor_user_id
 		WHERE %s
 		ORDER BY a.created_at DESC, a.id DESC
-		LIMIT $%d`, strings.Join(conds, " AND "), len(args))
+		LIMIT %s`, strings.Join(conds, " AND "), ph(limit+1))
 
 	out := []EntryView{}
 	err := tenancy.WithOrgTx(ctx, s.pool, orgID, func(tx pgx.Tx) error {
@@ -120,36 +128,47 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, p ListParams) (*Pag
 	page := &Page{}
 	if len(out) > limit {
 		last := out[limit-1]
-		page.NextCursor = encodeCursor(last.CreatedAt, last.ID)
+		page.NextCursor = encodeCursor(last.CreatedAt, last.ID, sig)
 		out = out[:limit]
 	}
 	page.Entries = out
 	return page, nil
 }
 
-// Cursor is "<RFC3339Nano>|<uuid>" base64url-encoded — opaque to clients, and
-// it carries exactly the (created_at, id) tuple the keyset comparison needs.
-func encodeCursor(t time.Time, id uuid.UUID) string {
-	raw := t.UTC().Format(time.RFC3339Nano) + "|" + id.String()
+// filterSig is the canonical signature of a request's filter set, embedded in
+// the cursor so a cursor can't be replayed under different filters.
+func filterSig(p ListParams) string {
+	actor := ""
+	if p.Actor != nil {
+		actor = p.Actor.String()
+	}
+	return p.Action + "\x1f" + actor // \x1f: unit separator, can't appear in action/uuid
+}
+
+// Cursor is "<RFC3339Nano>|<uuid>|<filterSig>" base64url-encoded — opaque to
+// clients; it carries the (created_at, id) tuple the keyset needs plus the
+// filter signature it was issued under.
+func encodeCursor(t time.Time, id uuid.UUID, sig string) string {
+	raw := t.UTC().Format(time.RFC3339Nano) + "|" + id.String() + "|" + sig
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-func decodeCursor(s string) (time.Time, uuid.UUID, error) {
+func decodeCursor(s string) (time.Time, uuid.UUID, string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return time.Time{}, uuid.Nil, err
+		return time.Time{}, uuid.Nil, "", err
 	}
-	ts, ids, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return time.Time{}, uuid.Nil, fmt.Errorf("malformed cursor")
+	parts := strings.SplitN(string(raw), "|", 3)
+	if len(parts) != 3 {
+		return time.Time{}, uuid.Nil, "", fmt.Errorf("malformed cursor")
 	}
-	t, err := time.Parse(time.RFC3339Nano, ts)
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
 	if err != nil {
-		return time.Time{}, uuid.Nil, err
+		return time.Time{}, uuid.Nil, "", err
 	}
-	id, err := uuid.Parse(ids)
+	id, err := uuid.Parse(parts[1])
 	if err != nil {
-		return time.Time{}, uuid.Nil, err
+		return time.Time{}, uuid.Nil, "", err
 	}
-	return t, id, nil
+	return t, id, parts[2], nil
 }

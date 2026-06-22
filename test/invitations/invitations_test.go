@@ -466,6 +466,43 @@ func (f fixture) inviteState(ctx context.Context, t *testing.T, id uuid.UUID) (*
 	return hash, outbox
 }
 
+// An accepted invitation is never re-delivered: the claim skips accepted rows
+// and Accept drops any pending outbox row, so a worker can't mint a fresh, valid
+// token for an org the user already joined.
+func TestAcceptedInviteIsNotRedelivered(t *testing.T) {
+	ctx, f := setup(t)
+
+	inv, token := f.invite(ctx, t, f.inviteeEml, authz.RoleMember)
+	if _, err := f.svc.Accept(ctx, f.invitee, token); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+
+	hashAfterAccept, _ := f.inviteState(ctx, t, inv.ID)
+	if hashAfterAccept == nil {
+		t.Fatal("accepted invite should still carry the delivered token's hash")
+	}
+
+	// Simulate a lingering delivery (e.g. a prior deleteOutbox that failed): a
+	// stray outbox row pointing at the now-accepted invite, due immediately.
+	if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO invitation_outbox (org_id, invitation_id, next_attempt_at)
+			 VALUES ($1, $2, now())`, f.org, inv.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("seed stray outbox row: %v", err)
+	}
+
+	// Draining must NOT re-mint: the claim filters out accepted invites.
+	if _, err := f.deliverer.DrainOnce(ctx, 50, 60); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	hashAfterDrain, _ := f.inviteState(ctx, t, inv.ID)
+	if hashAfterDrain == nil || *hashAfterDrain != *hashAfterAccept {
+		t.Fatal("token_hash was rotated for an already-accepted invite (claim filter failed)")
+	}
+}
+
 // owner and admin may manage invitations (list succeeds for both).
 func TestManagementEndpointsAllowOwnerAndAdmin(t *testing.T) {
 	ctx, f := setup(t)

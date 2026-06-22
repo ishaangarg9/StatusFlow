@@ -64,6 +64,25 @@ func TestLoginThrottle_WindowExpiry(t *testing.T) {
 	}
 }
 
+func TestLoginThrottle_SweepsExpiredKeys(t *testing.T) {
+	th, clk := newTestThrottle(3, time.Minute)
+
+	// Spray many distinct keys (mimics credential stuffing over unknown emails).
+	for i := range 1000 {
+		th.Fail("user" + string(rune('a'+i%26)) + "-" + time.Duration(i).String())
+	}
+	if th.Len() == 0 {
+		t.Fatal("expected keys to be tracked")
+	}
+	// After a full window, the next touch must sweep all stale entries so the map
+	// doesn't grow without bound.
+	clk.add(time.Minute + time.Second)
+	th.Fail("trigger-sweep")
+	if n := th.Len(); n != 1 {
+		t.Fatalf("expected the sweep to drop all expired keys (only the new one left), got %d", n)
+	}
+}
+
 func TestLoginThrottle_IndependentKeys(t *testing.T) {
 	th, _ := newTestThrottle(1, time.Minute)
 
