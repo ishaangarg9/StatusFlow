@@ -184,10 +184,31 @@ Follow every step — skipping one is how isolation bugs are born.
    (monitor lifecycle, URL validation 422, incident double-open 409, public projection hides
    URL + respects visibility, incident engine open/resolve) and product cross-tenant cases in
    `test/isolation/` (check_results/incidents/status_pages invisibility + the public fn).
-   **start at Phase 6 next** (note: the invitation-delivery outbox table + worker drain,
-   deferred from Phase 4, is a natural tie-in to fold into Phase 6 hardening).
-6. **Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.
+6. ~~**Hardening** — audit log, auth rate limiting, session revocation, SSRF guard.~~ **DONE.**
+   Auth/network: a per-account login throttle (`auth.LoginThrottle`, soft cap on
+   failed attempts per email, keyed to survive IP rotation; 429 over budget) layered
+   on the existing per-IP limiter, which now also guards `POST /api/invitations/accept`.
+   Session revocation was already wired (single/all/owner-scoped); Phase 6 proves it in
+   `test/sessions/` (revoke takes effect on the next `Resolve`, expired rows don't
+   resolve, cross-user revoke is 404). The SSRF dial guard was extracted to a testable
+   `ssrfDialControl`/`ssrfBlockedIP` with a suite covering every blocked class + an
+   end-to-end DNS-rebinding proof. Audit read got keyset pagination + action/actor
+   filters; **retention** is `prune_audit_logs(interval)` (migration 014) — a privileged,
+   cross-tenant maintenance fn `REVOKE`d from PUBLIC and **never granted to `app_user`**
+   (run on the migration/admin connection), proven denied-to-app_user in `test/audit/`.
+   Worker reliability: a **claim lease** (migration 015 adds a lease arg to
+   `claim_due_monitors`; `runCheck` resets `next_check_at` to the real interval only
+   after the result commits) so a crash mid-check costs one lease, not a skipped
+   interval — the lease is the reaper. And **durable invitation delivery** (migration
+   016): `invitation_outbox` (tenant-owned, RLS) drained by the worker via the 5th
+   escape hatch `claim_invitation_deliveries`; the raw token is minted at send time and
+   **never persisted** (`token_hash` is nullable until delivery). Proven by
+   `test/audit/`, `test/sessions/`, `internal/worker/` (SSRF + lease), and the async
+   delivery + `invitation_outbox` cross-tenant cases in `test/invitations/`/`test/isolation/`.
+   **start at Phase 7 next.**
 7. **The proof** — cross-tenant isolation tests + authz tests. The case study is built on this.
+   (Ongoing throughout — each phase added its isolation + authz cases. Phase 7 is the
+   consolidation/write-up of that proof into the case study.)
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 
