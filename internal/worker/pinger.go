@@ -37,33 +37,46 @@ var metadataIPs = []net.IP{
 	net.ParseIP("fd00:ec2::254"),   // AWS IMDSv6
 }
 
+// ssrfDialControl is the dialer Control hook. It runs AFTER name resolution and
+// BEFORE connect, so the address arg is "ip:port" with the *resolved* IP in
+// hand — which is what defeats DNS rebinding: an attacker serving an A record
+// for 127.0.0.1 still gets rejected here, because we judge the resolved IP, not
+// the hostname. Extracted to package scope so it is unit-testable.
+func ssrfDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return errors.New("ssrf: unresolved host")
+	}
+	return ssrfBlockedIP(ip)
+}
+
+// ssrfBlockedIP returns a non-nil error if ip is one the worker must never
+// connect to: non-global-unicast, loopback, RFC-1918/ULA private, link-local
+// (incl. 169.254.0.0/16, which covers IMDS), any multicast, or a known
+// cloud-metadata address.
+func ssrfBlockedIP(ip net.IP) error {
+	if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
+		return errors.New("ssrf: blocked destination (" + ip.String() + ")")
+	}
+	for _, mip := range metadataIPs {
+		if mip != nil && ip.Equal(mip) {
+			return errors.New("ssrf: cloud-metadata IP")
+		}
+	}
+	return nil
+}
+
 func NewPinger() *Pinger {
 	dialer := &net.Dialer{
 		Timeout:   5 * time.Second,
 		KeepAlive: 30 * time.Second,
-		// Control runs AFTER name resolution and BEFORE connect. The address
-		// arg is "ip:port" so we have the resolved IP in hand.
-		Control: func(network, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			ip := net.ParseIP(host)
-			if ip == nil {
-				return errors.New("ssrf: unresolved host")
-			}
-			if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() ||
-				ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-				ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
-				return errors.New("ssrf: blocked destination (" + ip.String() + ")")
-			}
-			for _, mip := range metadataIPs {
-				if mip != nil && ip.Equal(mip) {
-					return errors.New("ssrf: cloud-metadata IP")
-				}
-			}
-			return nil
-		},
+		Control:   ssrfDialControl,
 	}
 	return &Pinger{
 		client: &http.Client{

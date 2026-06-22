@@ -87,7 +87,13 @@ func (s *Server) Routes() nethttp.Handler {
 		r.Use(middleware.Authn(s.sessions))
 
 		orgsH.MountGlobal(r)
-		invH.MountGlobal(r)
+
+		// POST /api/invitations/accept takes a secret token: it's an online
+		// token-guessing surface, so rate-limit it per IP on top of Authn.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.IPRateLimit(s.cfg.RateLimitAcceptPerMin))
+			invH.MountGlobal(r)
+		})
 
 		// Org-scoped routes — Tenant middleware pins active org via membership.
 		r.Route("/orgs/{orgId}", func(r chi.Router) {

@@ -14,15 +14,27 @@ import (
 	"github.com/ishaangarg9/statusflow/internal/shared"
 )
 
+// Login-failure throttle defaults: a soft cap meant to slow credential
+// stuffing, not lock real users out. See auth.LoginThrottle for the tradeoff.
+const (
+	loginFailMax    = 10
+	loginFailWindow = 15 * time.Minute
+)
+
 // Service owns the auth domain. users + sessions are global tables (no RLS),
 // so every query here runs on the bare pool — no WithOrgTx.
 type Service struct {
 	pool     *pgxpool.Pool
 	sessions *auth.SessionStore
+	throttle *auth.LoginThrottle
 }
 
 func NewService(pool *pgxpool.Pool, sessions *auth.SessionStore) *Service {
-	return &Service{pool: pool, sessions: sessions}
+	return &Service{
+		pool:     pool,
+		sessions: sessions,
+		throttle: auth.NewLoginThrottle(loginFailMax, loginFailWindow),
+	}
 }
 
 // --- View types (the wire shape; safe to JSON-marshal) -------------------
@@ -107,6 +119,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 	if email == "" || in.Password == "" {
 		return "", nil, shared.Unauthorized()
 	}
+	// Per-account throttle: too many recent failures for this email → 429, even
+	// when the password is now correct. Keyed by email so it survives an
+	// attacker rotating source IPs past the per-IP limiter.
+	if !s.throttle.Allowed(email) {
+		return "", nil, shared.RateLimited()
+	}
 	var (
 		id   uuid.UUID
 		em   string
@@ -118,18 +136,21 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 	).Scan(&id, &em, &name, &hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			s.throttle.Fail(email)
 			return "", nil, shared.Unauthorized()
 		}
 		return "", nil, shared.Internal(err)
 	}
 	ok, err := auth.VerifyPassword(hash, in.Password)
 	if err != nil || !ok {
+		s.throttle.Fail(email)
 		return "", nil, shared.Unauthorized()
 	}
 	raw, _, err := s.sessions.Create(ctx, id, in.UA, in.IP)
 	if err != nil {
 		return "", nil, shared.Internal(err)
 	}
+	s.throttle.Reset(email)
 	return raw, &UserView{ID: id, Email: em, Name: name}, nil
 }
 

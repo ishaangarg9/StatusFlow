@@ -23,7 +23,8 @@ type Config struct {
 	IncidentOpenThreshold    int
 	IncidentResolveThreshold int
 
-	RateLimitLoginPerMin int
+	RateLimitLoginPerMin  int
+	RateLimitAcceptPerMin int
 }
 
 func LoadConfig() (*Config, error) {
@@ -79,6 +80,7 @@ func LoadConfig() (*Config, error) {
 		IncidentOpenThreshold:    optInt("INCIDENT_OPEN_THRESHOLD", 2),
 		IncidentResolveThreshold: optInt("INCIDENT_RESOLVE_THRESHOLD", 2),
 		RateLimitLoginPerMin:     optInt("RATE_LIMIT_LOGIN_PER_MIN", 10),
+		RateLimitAcceptPerMin:    optInt("RATE_LIMIT_ACCEPT_PER_MIN", 20),
 	}
 
 	if len(errs) > 0 {
