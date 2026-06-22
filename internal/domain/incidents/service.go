@@ -60,6 +60,22 @@ type UpdateInput struct {
 	Status  string
 }
 
+// updateStatuses is the closed vocabulary for an incident update's workflow
+// label. It is distinct from an incident's own open/resolved lifecycle status
+// (which only the Resolve path changes). Constraining it here means the value
+// surfaced verbatim on the public status page is always one the frontend can
+// map — incident_updates.status has no DB CHECK, so the app is the gate.
+var updateStatuses = map[string]bool{
+	"investigating": true,
+	"identified":    true,
+	"monitoring":    true,
+	"resolved":      true,
+}
+
+// ValidUpdateStatus reports whether s is an allowed incident-update status.
+// Callers are expected to trim/lowercase first.
+func ValidUpdateStatus(s string) bool { return updateStatuses[s] }
+
 // List returns the org's incidents, newest first (no nested updates).
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]IncidentView, error) {
 	out := []IncidentView{}
@@ -197,9 +213,12 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 	return &v, nil
 }
 
-// AddUpdate appends a status update to an incident and, when the update's
-// status differs, advances the incident's own status (without resolving — that
-// is the dedicated Resolve path). Returns the refreshed incident with updates.
+// AddUpdate appends a workflow update (message + status) to an incident's
+// timeline. It does NOT change the incident's own open/resolved lifecycle
+// status — that is the dedicated Resolve path; an update's status is a separate
+// workflow label (investigating/identified/monitoring/resolved). Updates are
+// refused on an already-resolved incident so the public timeline can't end up
+// with post-resolution "investigating" entries. Returns the incident + updates.
 func (s *Service) AddUpdate(ctx context.Context, ac authz.AuthContext, incidentID uuid.UUID, in UpdateInput) (*IncidentView, error) {
 	if !authz.Can(ac, authz.ActionIncidentUpdate, &authz.Resource{OrgID: ac.OrgID}) {
 		return nil, shared.Forbidden()
@@ -208,9 +227,9 @@ func (s *Service) AddUpdate(ctx context.Context, ac authz.AuthContext, incidentI
 	if message == "" {
 		return nil, shared.Validation("An update message is required.")
 	}
-	status := strings.TrimSpace(in.Status)
-	if status == "" {
-		return nil, shared.Validation("An update status is required.")
+	status := strings.ToLower(strings.TrimSpace(in.Status))
+	if !ValidUpdateStatus(status) {
+		return nil, shared.Validation("Status must be one of: investigating, identified, monitoring, resolved.")
 	}
 
 	var v IncidentView
@@ -222,6 +241,9 @@ func (s *Service) AddUpdate(ctx context.Context, ac authz.AuthContext, incidentI
 			`SELECT status FROM incidents WHERE org_id = $1 AND id = $2 FOR UPDATE`,
 			ac.OrgID, incidentID).Scan(&current); err != nil {
 			return err // ErrNoRows -> 404
+		}
+		if current == "resolved" {
+			return shared.Conflict("Cannot add updates to a resolved incident.")
 		}
 		updateID := uuid.New()
 		if _, err := tx.Exec(ctx, `

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -84,20 +85,22 @@ func (e *IncidentEngine) Apply(ctx context.Context, tx pgx.Tx, orgID, monitorID 
 	return e.resolveIncident(ctx, tx, orgID, monitorID)
 }
 
-// openIncident opens an incident for the monitor unless one is already open.
-// The partial unique index makes the ON CONFLICT a no-op when an open incident
-// exists, so concurrent workers can't double-open.
+// openIncident opens a worker-sourced incident for the monitor unless one is
+// already open. The partial unique index makes the ON CONFLICT a no-op when ANY
+// open incident exists (manual or worker), so concurrent workers can't
+// double-open and the worker won't open a duplicate alongside a human-authored
+// one.
 func (e *IncidentEngine) openIncident(ctx context.Context, tx pgx.Tx, orgID, monitorID uuid.UUID) error {
 	var incidentID uuid.UUID
 	err := tx.QueryRow(ctx, `
-		INSERT INTO incidents (org_id, monitor_id, title, status)
-		SELECT $1, $2, 'Automated: ' || m.name || ' is down', 'open'
+		INSERT INTO incidents (org_id, monitor_id, title, status, source)
+		SELECT $1, $2, 'Automated: ' || m.name || ' is down', 'open', 'worker'
 		FROM monitors m
 		WHERE m.id = $2 AND m.org_id = $1
 		ON CONFLICT (monitor_id) WHERE status = 'open' DO NOTHING
 		RETURNING id`, orgID, monitorID).Scan(&incidentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // an incident was already open (or monitor vanished) — no-op
 		}
 		return err
@@ -111,16 +114,19 @@ func (e *IncidentEngine) openIncident(ctx context.Context, tx pgx.Tx, orgID, mon
 	})
 }
 
-// resolveIncident closes the monitor's open incident, if any.
+// resolveIncident closes the monitor's open WORKER-sourced incident, if any. It
+// deliberately leaves manually-opened incidents (source='manual') untouched: a
+// human-authored incident must be resolved by a human, never silently by the
+// monitor recovering.
 func (e *IncidentEngine) resolveIncident(ctx context.Context, tx pgx.Tx, orgID, monitorID uuid.UUID) error {
 	var incidentID uuid.UUID
 	err := tx.QueryRow(ctx, `
 		UPDATE incidents SET status = 'resolved', resolved_at = now()
-		WHERE org_id = $1 AND monitor_id = $2 AND status = 'open'
+		WHERE org_id = $1 AND monitor_id = $2 AND status = 'open' AND source = 'worker'
 		RETURNING id`, orgID, monitorID).Scan(&incidentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil // nothing open — no-op
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // nothing worker-opened to resolve — no-op
 		}
 		return err
 	}

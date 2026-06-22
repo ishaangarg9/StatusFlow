@@ -3,7 +3,6 @@ package statuspages
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
 
@@ -29,10 +28,6 @@ type Service struct {
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
-
-// slugRe constrains a slug to a DNS-label-ish shape so it is safe to surface in
-// a public URL and predictable to look up.
-var slugRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // StatusPageView is the admin-side projection (the public path uses PublicView).
 type StatusPageView struct {
@@ -144,8 +139,8 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 		return nil, shared.Forbidden()
 	}
 	slug := strings.ToLower(strings.TrimSpace(in.Slug))
-	if !slugRe.MatchString(slug) {
-		return nil, shared.Validation("Slug must be lowercase letters, digits, and hyphens.")
+	if !shared.ValidSlug(slug) {
+		return nil, shared.Validation("Slug must be 2–63 chars: lowercase letters, digits, single hyphens.")
 	}
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
@@ -277,26 +272,34 @@ func (s *Service) SetMonitors(ctx context.Context, ac authz.AuthContext, id uuid
 }
 
 // setMonitors attaches the given monitor ids to a page, accepting only ids that
-// belong to the active org. If any requested id is foreign/unknown, it returns
-// a 422 so the caller can't silently attach a partial set. Assumes any prior
-// rows for this page were already cleared by the caller (Create starts empty).
+// belong to the active org. If any requested id is foreign/unknown it returns a
+// 422 — membership is validated directly (count the requested ids that exist in
+// this org) rather than inferred from insert row counts, so the check does not
+// depend on the join table being pre-cleared or on ON CONFLICT semantics.
 func setMonitors(ctx context.Context, tx pgx.Tx, orgID, pageID uuid.UUID, monitorIDs []uuid.UUID) ([]uuid.UUID, error) {
 	if len(monitorIDs) == 0 {
 		return []uuid.UUID{}, nil
 	}
-	// Insert only monitors that live in this org. RLS on monitors + the explicit
-	// org_id filter mean a foreign id contributes no row.
-	tag, err := tx.Exec(ctx, `
+	// Validate every requested id is a monitor in this org. RLS on monitors plus
+	// the explicit org_id filter mean a foreign id is simply not counted.
+	var inOrg int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM monitors WHERE org_id = $1 AND id = ANY($2)`,
+		orgID, monitorIDs).Scan(&inOrg); err != nil {
+		return nil, err
+	}
+	if inOrg != len(dedupe(monitorIDs)) {
+		return nil, shared.Validation("One or more monitorIds are not monitors in this organization.")
+	}
+	// ON CONFLICT DO NOTHING keeps the attach idempotent regardless of any rows
+	// already present for the page.
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO status_page_monitors (status_page_id, monitor_id, org_id)
 		SELECT $1, m.id, $2 FROM monitors m
 		WHERE m.org_id = $2 AND m.id = ANY($3)
 		ON CONFLICT DO NOTHING`,
-		pageID, orgID, monitorIDs)
-	if err != nil {
+		pageID, orgID, monitorIDs); err != nil {
 		return nil, err
-	}
-	if int(tag.RowsAffected()) != len(dedupe(monitorIDs)) {
-		return nil, shared.Validation("One or more monitorIds are not monitors in this organization.")
 	}
 	return loadMonitorIDs(ctx, tx, orgID, pageID)
 }
@@ -365,7 +368,11 @@ func (s *Service) PublicView(ctx context.Context, slug string) (*PublicView, err
 		}
 
 		// Components: each attached monitor's NAME (never its URL) plus a status
-		// derived from its latest check. No checks yet → treated as operational.
+		// derived from its LATEST RECENT check. The recency bound (3× the
+		// monitor's interval) means a paused monitor — whose checks stop, since
+		// the worker only claims is_paused=false — or one whose checks otherwise
+		// stalled is not reported with a frozen stale 'down'; absent recent data
+		// it reads as operational, like a monitor with no checks yet.
 		crows, err := tx.Query(ctx, `
 			SELECT m.name, latest.status
 			FROM status_page_monitors spm
@@ -373,6 +380,7 @@ func (s *Service) PublicView(ctx context.Context, slug string) (*PublicView, err
 			LEFT JOIN LATERAL (
 				SELECT status FROM check_results cr
 				WHERE cr.monitor_id = m.id AND cr.org_id = $1
+				  AND cr.checked_at >= now() - make_interval(secs => m.interval_seconds * 3)
 				ORDER BY cr.checked_at DESC
 				LIMIT 1
 			) latest ON true
@@ -401,7 +409,7 @@ func (s *Service) PublicView(ctx context.Context, slug string) (*PublicView, err
 		}
 		view.Overall = deriveOverall(len(view.Components), downCount)
 
-		// Open incidents for monitors attached to this page, with their updates.
+		// Open incidents for monitors attached to this page.
 		irows, err := tx.Query(ctx, `
 			SELECT i.id, i.title, i.status, i.started_at
 			FROM incidents i
@@ -412,48 +420,47 @@ func (s *Service) PublicView(ctx context.Context, slug string) (*PublicView, err
 			return err
 		}
 		defer irows.Close()
-		type inc struct {
-			id  uuid.UUID
-			pub PublicIncident
-		}
-		var incs []inc
+		var incidentIDs []uuid.UUID
+		idx := map[uuid.UUID]int{} // incident id -> index into view.Incidents
 		for irows.Next() {
-			var it inc
-			it.pub.Updates = []PublicIncidentUpdate{}
-			if err := irows.Scan(&it.id, &it.pub.Title, &it.pub.Status, &it.pub.StartedAt); err != nil {
+			var id uuid.UUID
+			pub := PublicIncident{Updates: []PublicIncidentUpdate{}}
+			if err := irows.Scan(&id, &pub.Title, &pub.Status, &pub.StartedAt); err != nil {
 				return err
 			}
-			incs = append(incs, it)
+			view.Incidents = append(view.Incidents, pub)
+			idx[id] = len(view.Incidents) - 1
+			incidentIDs = append(incidentIDs, id)
 		}
 		if err := irows.Err(); err != nil {
 			return err
 		}
-		for i := range incs {
+
+		// All updates for those incidents in ONE query, bucketed by incident
+		// (avoids an N+1 query per incident on this unauthenticated hot path).
+		if len(incidentIDs) > 0 {
 			urows, err := tx.Query(ctx, `
-				SELECT message, status, created_at
+				SELECT incident_id, message, status, created_at
 				FROM incident_updates
-				WHERE org_id = $1 AND incident_id = $2
-				ORDER BY created_at`, orgID, incs[i].id)
+				WHERE org_id = $1 AND incident_id = ANY($2)
+				ORDER BY incident_id, created_at`, orgID, incidentIDs)
 			if err != nil {
 				return err
 			}
-			func() {
-				defer urows.Close()
-				for urows.Next() {
-					var u PublicIncidentUpdate
-					if err = urows.Scan(&u.Message, &u.Status, &u.CreatedAt); err != nil {
-						return
-					}
-					incs[i].pub.Updates = append(incs[i].pub.Updates, u)
+			defer urows.Close()
+			for urows.Next() {
+				var incidentID uuid.UUID
+				var u PublicIncidentUpdate
+				if err := urows.Scan(&incidentID, &u.Message, &u.Status, &u.CreatedAt); err != nil {
+					return err
 				}
-				if e := urows.Err(); e != nil && err == nil {
-					err = e
+				if i, ok := idx[incidentID]; ok {
+					view.Incidents[i].Updates = append(view.Incidents[i].Updates, u)
 				}
-			}()
-			if err != nil {
+			}
+			if err := urows.Err(); err != nil {
 				return err
 			}
-			view.Incidents = append(view.Incidents, incs[i].pub)
 		}
 		return nil
 	})

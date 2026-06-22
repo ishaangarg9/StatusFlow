@@ -3,7 +3,6 @@ package orgs
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
 
@@ -217,8 +216,6 @@ func (s *Service) Delete(ctx context.Context, actorID, orgID uuid.UUID) error {
 
 // --- Validation ----------------------------------------------------------
 
-var slugRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
 func validateName(s string) error {
 	if s == "" || len(s) > 200 {
 		return shared.Validation("Name must be 1–200 characters.")
@@ -227,7 +224,7 @@ func validateName(s string) error {
 }
 
 func validateSlug(s string) error {
-	if len(s) < 2 || len(s) > 63 || !slugRe.MatchString(s) {
+	if !shared.ValidSlug(s) {
 		return shared.Validation("Slug must be 2–63 chars: lowercase letters, digits, single hyphens.")
 	}
 	return nil

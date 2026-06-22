@@ -141,5 +141,29 @@ func (w *Worker) runCheck(ctx context.Context, m Monitor) {
 	})
 	if err != nil {
 		w.log.Error("persist check", "monitor", m.ID, "org", m.OrgID, "err", err)
+		// The claim already pushed next_check_at a full interval forward, so a
+		// failed persist would otherwise silently drop this tick's observation
+		// and skip the monitor for an entire interval. Best-effort: pull
+		// next_check_at back to now so the next tick re-checks promptly. Uses a
+		// detached, short-lived context so this still runs when the failure was
+		// the parent ctx being cancelled (shutdown).
+		w.rescheduleSoon(m)
+	}
+}
+
+// rescheduleSoon best-effort resets a monitor's next_check_at to now so a check
+// whose persist failed is retried on the next tick instead of waiting a full
+// interval. A crash before this runs is not covered (that needs a lease/reaper),
+// but transient DB errors and shutdown cancellation are.
+func (w *Worker) rescheduleSoon(m Monitor) {
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tenancy.WithOrgTx(rctx, w.pool, m.OrgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(rctx,
+			`UPDATE monitors SET next_check_at = now() WHERE org_id = $1 AND id = $2`,
+			m.OrgID, m.ID)
+		return err
+	}); err != nil {
+		w.log.Error("reschedule after failed persist", "monitor", m.ID, "org", m.OrgID, "err", err)
 	}
 }

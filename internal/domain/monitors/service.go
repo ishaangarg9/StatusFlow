@@ -96,6 +96,52 @@ func validMonitorURL(raw string) bool {
 	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// The per-field validators below are the single source of the monitor field
+// rules so Create and Update can't drift. Each takes the already-normalized
+// value (trimmed; method upper-cased) and returns a 422 or nil.
+
+func checkName(name string) error {
+	if name == "" {
+		return shared.Validation("A monitor name is required.")
+	}
+	return nil
+}
+
+func checkURL(rawURL string) error {
+	if !validMonitorURL(rawURL) {
+		return shared.Validation("A valid http(s) URL is required.")
+	}
+	return nil
+}
+
+func checkMethod(method string) error {
+	if !validMethod(method) {
+		return shared.Validation("Method must be one of: GET, HEAD, POST.")
+	}
+	return nil
+}
+
+func checkExpectedStatus(code int) error {
+	if code < 100 || code > 599 {
+		return shared.Validation("expectedStatus must be a valid HTTP status code.")
+	}
+	return nil
+}
+
+func checkInterval(seconds int) error {
+	if seconds < minIntervalSeconds {
+		return shared.Validation("intervalSeconds must be at least 30.")
+	}
+	return nil
+}
+
+func checkTimeout(ms int) error {
+	if ms < 1000 || ms > 60000 {
+		return shared.Validation("timeoutMs must be between 1000 and 60000.")
+	}
+	return nil
+}
+
 // List returns every monitor in the active org, newest first.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]MonitorView, error) {
 	out := []MonitorView{}
@@ -155,40 +201,30 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 	}
 
 	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return nil, shared.Validation("A monitor name is required.")
-	}
 	rawURL := strings.TrimSpace(in.URL)
-	if !validMonitorURL(rawURL) {
-		return nil, shared.Validation("A valid http(s) URL is required.")
-	}
 	method := strings.ToUpper(strings.TrimSpace(in.Method))
 	if method == "" {
 		method = "GET"
-	}
-	if !validMethod(method) {
-		return nil, shared.Validation("Method must be one of: GET, HEAD, POST.")
 	}
 	expectedStatus := 200
 	if in.ExpectedStatus != nil {
 		expectedStatus = *in.ExpectedStatus
 	}
-	if expectedStatus < 100 || expectedStatus > 599 {
-		return nil, shared.Validation("expectedStatus must be a valid HTTP status code.")
-	}
 	interval := 60
 	if in.IntervalSeconds != nil {
 		interval = *in.IntervalSeconds
-	}
-	if interval < minIntervalSeconds {
-		return nil, shared.Validation("intervalSeconds must be at least 30.")
 	}
 	timeout := 10000
 	if in.TimeoutMs != nil {
 		timeout = *in.TimeoutMs
 	}
-	if timeout < 1000 || timeout > 60000 {
-		return nil, shared.Validation("timeoutMs must be between 1000 and 60000.")
+	for _, err := range []error{
+		checkName(name), checkURL(rawURL), checkMethod(method),
+		checkExpectedStatus(expectedStatus), checkInterval(interval), checkTimeout(timeout),
+	} {
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var m MonitorView
@@ -224,24 +260,38 @@ func (s *Service) Update(ctx context.Context, ac authz.AuthContext, id uuid.UUID
 		return nil, shared.Forbidden()
 	}
 
-	// Validate the provided fields up front so a bad patch is 422, not 500.
-	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
-		return nil, shared.Validation("A monitor name cannot be empty.")
+	// Validate the provided fields up front so a bad patch is 422, not 500. Each
+	// optional field reuses the same per-field validator Create uses, so the two
+	// paths can't disagree on what is acceptable.
+	if in.Name != nil {
+		if err := checkName(strings.TrimSpace(*in.Name)); err != nil {
+			return nil, err
+		}
 	}
-	if in.URL != nil && !validMonitorURL(strings.TrimSpace(*in.URL)) {
-		return nil, shared.Validation("A valid http(s) URL is required.")
+	if in.URL != nil {
+		if err := checkURL(strings.TrimSpace(*in.URL)); err != nil {
+			return nil, err
+		}
 	}
-	if in.Method != nil && !validMethod(strings.ToUpper(strings.TrimSpace(*in.Method))) {
-		return nil, shared.Validation("Method must be one of: GET, HEAD, POST.")
+	if in.Method != nil {
+		if err := checkMethod(strings.ToUpper(strings.TrimSpace(*in.Method))); err != nil {
+			return nil, err
+		}
 	}
-	if in.ExpectedStatus != nil && (*in.ExpectedStatus < 100 || *in.ExpectedStatus > 599) {
-		return nil, shared.Validation("expectedStatus must be a valid HTTP status code.")
+	if in.ExpectedStatus != nil {
+		if err := checkExpectedStatus(*in.ExpectedStatus); err != nil {
+			return nil, err
+		}
 	}
-	if in.IntervalSeconds != nil && *in.IntervalSeconds < minIntervalSeconds {
-		return nil, shared.Validation("intervalSeconds must be at least 30.")
+	if in.IntervalSeconds != nil {
+		if err := checkInterval(*in.IntervalSeconds); err != nil {
+			return nil, err
+		}
 	}
-	if in.TimeoutMs != nil && (*in.TimeoutMs < 1000 || *in.TimeoutMs > 60000) {
-		return nil, shared.Validation("timeoutMs must be between 1000 and 60000.")
+	if in.TimeoutMs != nil {
+		if err := checkTimeout(*in.TimeoutMs); err != nil {
+			return nil, err
+		}
 	}
 
 	var m MonitorView

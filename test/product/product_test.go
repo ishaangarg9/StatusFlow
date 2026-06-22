@@ -273,4 +273,114 @@ func TestIncidentEngineOpensAndResolves(t *testing.T) {
 	}
 }
 
+// TestWorkerLeavesManualIncidentsAlone proves the worker's auto-resolve never
+// closes a human-authored incident: a manual incident stays open through a full
+// recovery up-streak that would resolve a worker-opened one.
+func TestWorkerLeavesManualIncidentsAlone(t *testing.T) {
+	ctx, f := setup(t)
+	mon := monitors.NewService(f.pool)
+	inc := incidents.NewService(f.pool)
+	engine := worker.NewIncidentEngine(2, 2)
+
+	m, err := mon.Create(ctx, f.ac, monitors.CreateInput{Name: "Edge", URL: "https://edge.example"})
+	if err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	manual, err := inc.Create(ctx, f.ac, incidents.CreateInput{MonitorID: m.ID, Title: "human-opened"})
+	if err != nil {
+		t.Fatalf("manual incident: %v", err)
+	}
+
+	// Feed a recovery up-streak through the engine, as the worker would.
+	for range 3 {
+		if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO check_results (org_id, monitor_id, status) VALUES ($1, $2, 'up')`,
+				f.org, m.ID); err != nil {
+				return err
+			}
+			return engine.Apply(ctx, tx, f.org, m.ID, "up")
+		}); err != nil {
+			t.Fatalf("apply up: %v", err)
+		}
+	}
+
+	got, err := inc.Get(ctx, f.org, manual.ID)
+	if err != nil {
+		t.Fatalf("get manual incident: %v", err)
+	}
+	if got.Status != "open" {
+		t.Fatalf("worker auto-resolved a manually-created incident (status=%q)", got.Status)
+	}
+}
+
+// TestIncidentUpdateStatusValidation rejects an out-of-vocabulary status and
+// refuses updates on a resolved incident.
+func TestIncidentUpdateStatusValidation(t *testing.T) {
+	ctx, f := setup(t)
+	mon := monitors.NewService(f.pool)
+	inc := incidents.NewService(f.pool)
+
+	m, err := mon.Create(ctx, f.ac, monitors.CreateInput{Name: "API", URL: "https://api.example"})
+	if err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	created, err := inc.Create(ctx, f.ac, incidents.CreateInput{MonitorID: m.ID, Title: "down"})
+	if err != nil {
+		t.Fatalf("create incident: %v", err)
+	}
+
+	// Garbage status → 422.
+	if _, err := inc.AddUpdate(ctx, f.ac, created.ID, incidents.UpdateInput{Message: "x", Status: "banana"}); appErrStatus(err) != 422 {
+		t.Fatalf("expected 422 for invalid update status, got %v", err)
+	}
+	// Valid status → ok.
+	if _, err := inc.AddUpdate(ctx, f.ac, created.ID, incidents.UpdateInput{Message: "looking", Status: "investigating"}); err != nil {
+		t.Fatalf("valid update rejected: %v", err)
+	}
+	// After resolve, further updates are refused (409).
+	if _, err := inc.Resolve(ctx, f.ac, created.ID); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if _, err := inc.AddUpdate(ctx, f.ac, created.ID, incidents.UpdateInput{Message: "more", Status: "monitoring"}); appErrStatus(err) != 409 {
+		t.Fatalf("expected 409 adding update to resolved incident, got %v", err)
+	}
+}
+
+// TestPublicViewIgnoresStaleChecks proves the recency bound: a 'down' check far
+// older than the monitor's interval is not reported as the current status.
+func TestPublicViewIgnoresStaleChecks(t *testing.T) {
+	ctx, f := setup(t)
+	mon := monitors.NewService(f.pool)
+	sp := statuspages.NewService(f.pool)
+
+	m, err := mon.Create(ctx, f.ac, monitors.CreateInput{Name: "Old", URL: "https://old.example"})
+	if err != nil {
+		t.Fatalf("create monitor: %v", err)
+	}
+	// A 'down' check well beyond 3× the 60s default interval.
+	if err := tenancy.WithOrgTx(ctx, f.pool, f.org, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO check_results (org_id, monitor_id, status, checked_at)
+			VALUES ($1, $2, 'down', now() - interval '1 hour')`, f.org, m.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("seed stale check: %v", err)
+	}
+
+	slug := "stale-" + uuid.NewString()[:8]
+	if _, err := sp.Create(ctx, f.ac, statuspages.CreateInput{
+		Slug: slug, Title: "S", IsPublic: true, MonitorIDs: []uuid.UUID{m.ID},
+	}); err != nil {
+		t.Fatalf("create page: %v", err)
+	}
+	view, err := sp.PublicView(ctx, slug)
+	if err != nil {
+		t.Fatalf("public view: %v", err)
+	}
+	if len(view.Components) != 1 || view.Components[0].Status != "operational" {
+		t.Fatalf("stale 'down' check should not be reported as current; got %+v", view.Components)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
