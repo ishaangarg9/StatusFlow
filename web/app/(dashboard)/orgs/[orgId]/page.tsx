@@ -1,22 +1,84 @@
-// Authenticated dashboard root for a single org. Client-side fetches go
-// through lib/api.ts (which targets the BFF route handlers or the Go API
-// directly, per doc 06 ADR-11). Permission enforcement is server-side; this
-// UI only hides controls a viewer can't use.
+import Link from "next/link";
+import { serverApi } from "@/lib/api/server";
+import { StatusBadge } from "@/components/status-badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
-export default async function OrgDashboard({
+export default async function OrgOverview({
   params,
 }: {
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
+  const [org, monitors, incidents] = await Promise.all([
+    serverApi.getOrg(orgId),
+    serverApi.listMonitors(orgId),
+    serverApi.listIncidents(orgId),
+  ]);
+
+  const active = monitors.filter((m) => !m.isPaused).length;
+  const open = incidents.filter((i) => i.status === "open");
+
+  const stats = [
+    { label: "Monitors", value: monitors.length, href: `/orgs/${orgId}/monitors` },
+    { label: "Active", value: active, href: `/orgs/${orgId}/monitors` },
+    { label: "Open incidents", value: open.length, href: `/orgs/${orgId}/incidents` },
+  ];
+
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold">Org dashboard</h1>
-      <p className="mt-1 text-sm text-neutral-500">org_id: {orgId}</p>
-      <p className="mt-6 text-neutral-600 dark:text-neutral-400">
-        Monitors, incidents, and members appear here once the API endpoints
-        are wired up. See doc 04 for the route table.
-      </p>
-    </main>
+    <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-8">
+      <div>
+        <h1 className="text-2xl font-semibold">{org.name}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">/{org.slug}</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {stats.map((s) => (
+          <Link key={s.label} href={s.href}>
+            <Card className="transition-colors hover:bg-muted/50">
+              <CardHeader className="pb-2">
+                <CardDescription>{s.label}</CardDescription>
+                <CardTitle className="text-3xl">{s.value}</CardTitle>
+              </CardHeader>
+            </Card>
+          </Link>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Open incidents</CardTitle>
+          <CardDescription>
+            Active incidents across this organization.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {open.length > 0 ? (
+            <ul className="divide-y">
+              {open.map((i) => (
+                <li key={i.id} className="flex items-center justify-between py-3">
+                  <Link
+                    href={`/orgs/${orgId}/incidents/${i.id}`}
+                    className="font-medium hover:underline"
+                  >
+                    {i.title}
+                  </Link>
+                  <StatusBadge status={i.status} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              All systems operational.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
