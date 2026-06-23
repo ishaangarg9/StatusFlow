@@ -127,8 +127,8 @@ func (w *Worker) startInviteDrain(ctx context.Context) {
 			if n, err := w.drainInvites(ctx); err != nil {
 				w.log.Error("drain invitations", "err", err)
 			} else if n > 0 {
-				metrics.InvitationsDelivered.Add(float64(n))
-				w.log.Info("delivered invitations", "count", n)
+				metrics.InvitationsProcessed.Add(float64(n))
+				w.log.Info("processed invitations", "count", n)
 			}
 		}()
 	default:

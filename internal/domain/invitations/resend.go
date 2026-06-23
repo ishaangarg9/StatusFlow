@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,7 +24,7 @@ type ResendMailer struct {
 	apiKey  string
 	from    string       // RFC-5322 From, e.g. "StatusFlow <noreply@statusflow.example>"
 	baseURL string       // app base URL for the accept link; token-only if empty
-	client  *http.Client // bounded; the Deliverer also wraps the call in a timeout
+	client  *http.Client // see NewResendMailer for the timeout policy
 }
 
 // NewResendMailer builds the transport. apiKey and from are required (the caller
@@ -35,7 +36,15 @@ func NewResendMailer(apiKey, from, baseURL string) *ResendMailer {
 		apiKey:  apiKey,
 		from:    from,
 		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: 10 * time.Second},
+		// No overall client Timeout: the end-to-end bound is the caller's context
+		// deadline (the Deliverer sets it to sendTimeout), so tuning that knob
+		// actually takes effect rather than being silently capped here. A dial
+		// timeout is the floor for any caller that forgets to pass a deadline.
+		client: &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			},
+		},
 	}
 }
 

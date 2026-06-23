@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	stdhttp "net/http"
 	"os"
@@ -57,31 +56,21 @@ func main() {
 	// Ops server: liveness/readiness/metrics on a dedicated, non-public port.
 	opsSrv := ops.NewServer(cfg.OpsAddr, pool, log)
 
-	errCh := make(chan error, 2)
-	go func() {
-		log.Info("api listening", "addr", cfg.APIAddr)
-		errCh <- httpSrv.ListenAndServe()
-	}()
-	go func() {
-		log.Info("ops listening", "addr", cfg.OpsAddr)
-		errCh <- opsSrv.ListenAndServe()
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Info("shutdown signal")
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-			log.Error("listen", "err", err)
-		}
-	}
-
-	shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Run both listeners through ops.Serve so they share one graceful-shutdown
+	// lifecycle. When either fails (e.g. a port bind error), cancel the other and
+	// exit non-zero — a clean exit on a bind failure would hide the crash.
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutCtx); err != nil {
-		log.Error("shutdown", "err", err)
-	}
-	if err := opsSrv.Shutdown(shutCtx); err != nil {
-		log.Error("ops shutdown", "err", err)
+	errCh := make(chan error, 2)
+	go func() { errCh <- ops.Serve(runCtx, httpSrv, log) }()
+	go func() { errCh <- ops.Serve(runCtx, opsSrv, log) }()
+
+	err = <-errCh // first to return: ctx cancellation (clean) or a serve failure
+	cancel()      // bring the other listener down too
+	<-errCh       // wait for it to finish shutting down
+
+	if err != nil {
+		log.Error("listen", "err", err)
+		os.Exit(1)
 	}
 }

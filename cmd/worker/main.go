@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	stdhttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/ishaangarg9/statusflow/internal/db"
 	"github.com/ishaangarg9/statusflow/internal/domain/invitations"
@@ -49,12 +47,19 @@ func main() {
 	deliverer := invitations.NewDeliverer(pool, mailer, log)
 
 	// Ops server: liveness/readiness/metrics on a dedicated, non-public port.
+	// Run it through ops.Serve and cancel the worker if it fails (e.g. a port
+	// bind error) so a missing readiness/metrics endpoint brings the process
+	// down loudly instead of running blind.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	opsSrv := ops.NewServer(cfg.OpsAddr, pool, log)
+	opsErrCh := make(chan error, 1)
 	go func() {
-		log.Info("ops listening", "addr", cfg.OpsAddr)
-		if err := opsSrv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-			log.Error("ops listen", "err", err)
+		err := ops.Serve(runCtx, opsSrv, log)
+		if err != nil {
+			cancel() // a fatal ops failure stops the worker too
 		}
+		opsErrCh <- err
 	}()
 
 	w := worker.New(pool, log, worker.Config{
@@ -69,16 +74,17 @@ func main() {
 		},
 	})
 
-	// Run blocks until ctx is cancelled (SIGTERM); the worker's own loop drains
-	// in-flight checks before returning (see worker.Run).
-	runErr := w.Run(ctx)
+	// Run blocks until runCtx is cancelled (SIGTERM, or a fatal ops failure
+	// above); the worker's own loop drains in-flight checks before returning.
+	runErr := w.Run(runCtx)
 
-	shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := opsSrv.Shutdown(shutCtx); err != nil {
-		log.Error("ops shutdown", "err", err)
+	cancel()             // stop ops.Serve (no-op if it already failed)
+	opsErr := <-opsErrCh // and collect its outcome
+
+	if opsErr != nil {
+		log.Error("ops", "err", opsErr)
+		os.Exit(1)
 	}
-
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		log.Error("worker", "err", runErr)
 		os.Exit(1)

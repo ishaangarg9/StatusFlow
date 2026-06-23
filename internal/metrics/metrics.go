@@ -83,13 +83,15 @@ var (
 		Help:      "Monitors claimed on the most recent worker tick.",
 	})
 
-	// InvitationsDelivered counts invitation deliveries handled by the outbox
-	// drain (sent or dropped as terminal), cumulative.
-	InvitationsDelivered = prometheus.NewCounter(prometheus.CounterOpts{
+	// InvitationsProcessed counts invitation outbox rows the drain brought to a
+	// terminal state — sent OR dropped (expired/already-accepted/abandoned),
+	// cumulative. It is NOT a delivery-success count; failures and drops are
+	// included, which is why it isn't named "delivered".
+	InvitationsProcessed = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "statusflow",
 		Subsystem: "worker",
-		Name:      "invitations_delivered_total",
-		Help:      "Invitation outbox rows reaching a terminal state (cumulative).",
+		Name:      "invitations_processed_total",
+		Help:      "Invitation outbox rows reaching a terminal state, sent or dropped (cumulative).",
 	})
 )
 
@@ -103,7 +105,7 @@ func init() {
 		CheckDuration,
 		MonitorsClaimed,
 		ClaimBatchSize,
-		InvitationsDelivered,
+		InvitationsProcessed,
 	)
 }
 

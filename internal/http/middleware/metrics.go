@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/ishaangarg9/statusflow/internal/metrics"
 )
@@ -17,37 +18,22 @@ import (
 func Metrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
+		// chi's wrapper captures the status and transparently forwards the
+		// optional ResponseWriter interfaces (Flusher/Hijacker/ReaderFrom), so
+		// streaming/upgrade routes keep working under this middleware.
+		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
 
 		route := chi.RouteContext(r.Context()).RoutePattern()
 		if route == "" {
 			route = "unmatched"
 		}
+		status := ww.Status()
+		if status == 0 {
+			status = http.StatusOK // no explicit WriteHeader → implicit 200
+		}
 		metrics.HTTPRequestDuration.
-			WithLabelValues(r.Method, route, strconv.Itoa(sw.status)).
+			WithLabelValues(r.Method, route, strconv.Itoa(status)).
 			Observe(time.Since(start).Seconds())
 	})
-}
-
-// statusWriter captures the response status code for the metric label. It only
-// records the first WriteHeader (the one that's actually sent) and treats an
-// implicit 200 (a bare Write) correctly via the default.
-type statusWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	if !w.wroteHeader {
-		w.status = code
-		w.wroteHeader = true
-	}
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	w.wroteHeader = true
-	return w.ResponseWriter.Write(b)
 }

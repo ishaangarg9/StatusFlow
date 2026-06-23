@@ -7,6 +7,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -15,6 +16,42 @@ import (
 
 	"github.com/ishaangarg9/statusflow/internal/metrics"
 )
+
+// shutdownGrace bounds how long Serve waits for in-flight requests to drain on
+// shutdown before giving up.
+const shutdownGrace = 15 * time.Second
+
+// Serve runs srv until ctx is cancelled or the server fails, owning graceful
+// shutdown. On ctx cancellation it Shutdown()s within shutdownGrace and returns
+// nil; if ListenAndServe fails for any other reason — most importantly a port
+// bind failure at startup — it returns that error so the caller can treat it as
+// fatal and exit non-zero (a clean exit on a bind failure would hide a crash
+// from the supervisor). Both binaries run every listener through this so the app
+// and ops servers share one lifecycle instead of diverging per main.
+func Serve(ctx context.Context, srv *http.Server, log *slog.Logger) error {
+	errc := make(chan error, 1)
+	go func() {
+		log.Info("listening", "addr", srv.Addr)
+		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil // a clean Shutdown, not a failure
+		}
+		errc <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		if err := srv.Shutdown(shutCtx); err != nil {
+			log.Error("shutdown", "addr", srv.Addr, "err", err)
+		}
+		<-errc // let ListenAndServe unwind (it returns ErrServerClosed → nil)
+		return nil
+	case err := <-errc:
+		return err
+	}
+}
 
 // NewServer builds the ops HTTP server. It intentionally has its own mux (no
 // authn/tenant/request-logging middleware) so probe and scrape traffic stays
