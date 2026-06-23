@@ -73,8 +73,8 @@ jobs:
       - name: Test (with RLS, as app_user)
         run: go test ./...
 
-  # Frontend gate: typecheck + production build. Lint is deferred until the real
-  # UI lands in P9 (the skeleton has no eslint config yet).
+  # Frontend gate: lint + typecheck + production build against the committed
+  # pnpm lockfile (--frozen-lockfile makes the lockfile authoritative).
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -92,7 +92,10 @@ jobs:
           node-version: 20
 
       - name: Install
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
 
       - name: Typecheck
         run: pnpm typecheck

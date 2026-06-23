@@ -1,33 +1,24 @@
-// Typed fetch client for the Go API. Keep this thin: every endpoint is
-// re-enforced server-side, so this layer is just shape + transport.
-//
-// For auth-sensitive calls in the browser, prefer the BFF route handlers
-// under app/api/ so the sf_session cookie stays first-party + HttpOnly
-// (doc 06 ADR-11). The functions below talk to the API directly and are
-// safe for *server* components (SSR public page) where no cookie is sent.
+import "server-only";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+// Public, UNAUTHENTICATED fetch for the SSR status page. This path must NEVER
+// send the session cookie and is deliberately separate from lib/api/server.ts
+// (which forwards the cookie). It targets the server-only INTERNAL_API_URL so
+// the API origin is never exposed to the browser (ADR-11).
 
-export type PublicStatus = {
-  title: string;
-  overall: "operational" | "degraded" | "down";
-  components: { name: string; status: string }[];
-  incidents: {
-    title: string;
-    status: string;
-    startedAt: string;
-    updates: { message: string; status: string; createdAt: string }[];
-  }[];
-};
+import type { PublicStatus } from "./types";
+
+export type { PublicStatus };
+
+const INTERNAL_API_URL =
+  process.env.INTERNAL_API_URL ?? "http://localhost:8081";
 
 export async function getPublicStatus(
   slug: string,
 ): Promise<PublicStatus | null> {
-  const res = await fetch(`${API_BASE_URL}/api/public/status/${slug}`, {
-    // Server-side fetch only; never includes credentials.
-    cache: "no-store",
-  });
+  const res = await fetch(
+    `${INTERNAL_API_URL}/api/public/status/${encodeURIComponent(slug)}`,
+    { cache: "no-store" },
+  );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`status ${res.status}`);
   return (await res.json()) as PublicStatus;
