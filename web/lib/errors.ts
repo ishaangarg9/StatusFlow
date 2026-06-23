@@ -29,3 +29,12 @@ export async function parseError(res: Response): Promise<ApiError> {
   }
   return new ApiError(res.status, code, message);
 }
+
+// errorMessage extracts a human-readable message from an unknown thrown value,
+// falling back to `fallback`. Centralizes the `e instanceof Error ? e.message`
+// idiom so error presentation can evolve in one place (e.g. branching on
+// ApiError.status/code) instead of being copy-pasted across every mutation.
+export function errorMessage(e: unknown, fallback = "Something went wrong"): string {
+  if (e instanceof Error && e.message) return e.message;
+  return fallback;
+}

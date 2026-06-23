@@ -1,10 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { qk } from "@/lib/query-keys";
+import { formatDateTime } from "@/lib/utils";
 import { Can } from "@/components/can";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -19,10 +21,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-function fmt(ts: string) {
-  return new Date(ts).toLocaleString();
-}
-
 export function IncidentsList({ orgId }: { orgId: string }) {
   const { data: incidents, isLoading } = useQuery({
     queryKey: qk.incidents(orgId),
@@ -35,8 +33,14 @@ export function IncidentsList({ orgId }: { orgId: string }) {
     queryFn: () => api.listMonitors(orgId),
   });
 
-  const nameFor = (id: string) =>
-    monitors?.find((m) => m.id === id)?.name ?? "—";
+  // Build the id -> name lookup once per monitors change instead of scanning
+  // the monitors array for every incident row on every render/poll.
+  const monitorNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const mon of monitors ?? []) m.set(mon.id, mon.name);
+    return m;
+  }, [monitors]);
+  const nameFor = (id: string) => monitorNames.get(id) ?? "—";
 
   return (
     <div>
@@ -89,7 +93,7 @@ export function IncidentsList({ orgId }: { orgId: string }) {
                       <StatusBadge status={inc.status} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {fmt(inc.startedAt)}
+                      {formatDateTime(inc.startedAt)}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +32,7 @@ export function LoginForm({ next }: { next: string }) {
       router.push(next);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Login failed");
+      toast.error(errorMessage(err, "Login failed"));
       setPending(false);
     }
   }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +44,7 @@ export function IncidentForm({ orgId }: { orgId: string }) {
       router.push(`/orgs/${orgId}/incidents/${inc.id}`);
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

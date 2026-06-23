@@ -5,12 +5,10 @@ import "server-only";
 // (which forwards the cookie). It targets the server-only INTERNAL_API_URL so
 // the API origin is never exposed to the browser (ADR-11).
 
+import { INTERNAL_API_URL } from "./config";
 import type { PublicStatus } from "./types";
 
 export type { PublicStatus };
-
-const INTERNAL_API_URL =
-  process.env.INTERNAL_API_URL ?? "http://localhost:8081";
 
 export async function getPublicStatus(
   slug: string,

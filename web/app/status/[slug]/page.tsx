@@ -8,6 +8,7 @@
 import { notFound } from "next/navigation";
 import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { getPublicStatus, type PublicStatus } from "@/lib/api";
+import { formatDateTime } from "@/lib/utils";
 import { StatusBadge } from "@/components/status-badge";
 
 export const revalidate = 30; // ISR: regenerate at most every 30s
@@ -32,10 +33,6 @@ const OVERALL: Record<
     className: "text-destructive",
   },
 };
-
-function fmt(ts: string) {
-  return new Date(ts).toLocaleString();
-}
 
 export default async function PublicStatusPage({
   params,
@@ -97,7 +94,7 @@ function StatusView({ data }: { data: PublicStatus }) {
                       <div className="flex items-center gap-2">
                         <StatusBadge status={u.status} />
                         <time className="text-xs text-muted-foreground">
-                          {fmt(u.createdAt)}
+                          {formatDateTime(u.createdAt)}
                         </time>
                       </div>
                       <p className="mt-1 text-muted-foreground">{u.message}</p>

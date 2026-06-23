@@ -5,7 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
+import { formatDateTime } from "@/lib/utils";
 import { Can } from "@/components/can";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MonitorForm } from "@/components/forms/monitor-form";
@@ -27,10 +29,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
-function fmt(ts: string) {
-  return new Date(ts).toLocaleString();
-}
 
 export function MonitorDetail({
   orgId,
@@ -61,7 +59,7 @@ export function MonitorDetail({
       router.push(`/orgs/${orgId}/monitors`);
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   if (isLoading || !monitor) {
@@ -126,7 +124,7 @@ export function MonitorDetail({
                       {c.latencyMs != null ? `${c.latencyMs} ms` : "—"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {fmt(c.checkedAt)}
+                      {formatDateTime(c.checkedAt)}
                       {c.error ? ` · ${c.error}` : ""}
                     </TableCell>
                   </TableRow>

@@ -12,11 +12,9 @@
 //   - State-changing methods pass an Origin / Sec-Fetch-Site check first.
 
 import { NextRequest, NextResponse } from "next/server";
+import { INTERNAL_API_URL, SESSION_COOKIE } from "@/lib/config";
 import { passesOriginCheck } from "@/lib/origin";
 
-const INTERNAL_API_URL =
-  process.env.INTERNAL_API_URL ?? "http://localhost:8081";
-const COOKIE_NAME = "sf_session";
 // In non-production the browser↔Next hop is http://localhost, where a `Secure`
 // cookie is dropped. Strip it there; keep it in production (https).
 const STRIP_SECURE = process.env.NODE_ENV !== "production";
@@ -39,8 +37,8 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (ct) headers["content-type"] = ct;
   const accept = req.headers.get("accept");
   if (accept) headers["accept"] = accept;
-  const token = req.cookies.get(COOKIE_NAME)?.value;
-  if (token) headers["cookie"] = `${COOKIE_NAME}=${token}`;
+  const token = req.cookies.get(SESSION_COOKIE)?.value;
+  if (token) headers["cookie"] = `${SESSION_COOKIE}=${token}`;
   const xff = req.headers.get("x-forwarded-for");
   if (xff) headers["x-forwarded-for"] = xff;
 

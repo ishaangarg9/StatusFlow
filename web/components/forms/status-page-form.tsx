@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
 import { MonitorPicker } from "@/components/monitor-picker";
 import { Button } from "@/components/ui/button";
@@ -52,7 +53,7 @@ export function StatusPageForm({ orgId }: { orgId: string }) {
       router.push(`/orgs/${orgId}/status-pages/${page.id}`);
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

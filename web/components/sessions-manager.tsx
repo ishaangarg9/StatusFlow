@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
+import { formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,10 +17,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-function fmt(ts: string) {
-  return new Date(ts).toLocaleString();
-}
 
 export function SessionsManager() {
   const router = useRouter();
@@ -35,7 +33,7 @@ export function SessionsManager() {
       toast.success("Session revoked");
       qc.invalidateQueries({ queryKey: qk.sessions });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const logoutAll = useMutation({
@@ -45,7 +43,7 @@ export function SessionsManager() {
       router.push("/login");
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (
@@ -81,8 +79,8 @@ export function SessionsManager() {
                 {s.current && <Badge variant="secondary">This device</Badge>}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {s.ip ? `${s.ip} · ` : ""}since {fmt(s.createdAt)} · expires{" "}
-                {fmt(s.expiresAt)}
+                {s.ip ? `${s.ip} · ` : ""}since {formatDateTime(s.createdAt)} ·
+                expires {formatDateTime(s.expiresAt)}
               </p>
             </div>
             {!s.current && (

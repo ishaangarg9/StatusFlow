@@ -4,6 +4,7 @@
 // we hard-redirect to /login.
 
 import { ApiError, parseError } from "../errors";
+import { loginPath } from "../nav";
 import { makeApi, type ApiFetch } from "./endpoints";
 
 const clientFetch: ApiFetch = async <T>(
@@ -20,7 +21,10 @@ const clientFetch: ApiFetch = async <T>(
 
   if (res.status === 401) {
     if (typeof window !== "undefined") {
-      window.location.href = "/login";
+      // Preserve the deep link so re-auth returns the user where they were,
+      // matching the middleware's ?next= behavior.
+      const here = window.location.pathname + window.location.search;
+      window.location.href = loginPath(here);
     }
     throw new ApiError(401, "unauthorized", "Your session has expired.");
   }

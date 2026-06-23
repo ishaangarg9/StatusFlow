@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -27,7 +28,7 @@ export function AcceptInvitation({ token }: { token: string | null }) {
       router.push(`/orgs/${membership.orgId}`);
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,7 +43,7 @@ export function CreateOrgForm() {
       router.push(`/orgs/${org.id}`);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create org");
+      toast.error(errorMessage(err, "Could not create org"));
       setPending(false);
     }
   }

@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
 import type { MonitorInput } from "@/lib/api/endpoints";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
 import type { HttpMethod, Monitor } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -74,7 +75,7 @@ export function MonitorForm({
       router.push(`/orgs/${orgId}/monitors/${m.id}`);
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

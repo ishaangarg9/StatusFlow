@@ -5,12 +5,9 @@ import "server-only";
 // directly via the server-only INTERNAL_API_URL (the browser never sees it).
 
 import { cookies } from "next/headers";
+import { INTERNAL_API_URL, SESSION_COOKIE } from "../config";
 import { ApiError, parseError } from "../errors";
 import { makeApi, type ApiFetch } from "./endpoints";
-
-const INTERNAL_API_URL =
-  process.env.INTERNAL_API_URL ?? "http://localhost:8081";
-const COOKIE_NAME = "sf_session";
 
 const serverFetch: ApiFetch = async <T>(
   method: string,
@@ -18,11 +15,11 @@ const serverFetch: ApiFetch = async <T>(
   body?: unknown,
 ): Promise<T> => {
   const jar = await cookies();
-  const token = jar.get(COOKIE_NAME)?.value;
+  const token = jar.get(SESSION_COOKIE)?.value;
 
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["content-type"] = "application/json";
-  if (token) headers["cookie"] = `${COOKIE_NAME}=${token}`;
+  if (token) headers["cookie"] = `${SESSION_COOKIE}=${token}`;
 
   const res = await fetch(`${INTERNAL_API_URL}/api${path}`, {
     method,

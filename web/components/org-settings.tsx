@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
 import type { Org } from "@/lib/types";
 import { useCan } from "@/components/can";
@@ -38,7 +39,7 @@ export function OrgSettings({ org }: { org: Org }) {
       qc.invalidateQueries({ queryKey: qk.me });
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const remove = useMutation({
@@ -48,7 +49,7 @@ export function OrgSettings({ org }: { org: Org }) {
       router.push("/orgs");
       router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

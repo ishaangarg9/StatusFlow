@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE } from "@/lib/config";
+import { loginPath } from "@/lib/nav";
 
 // Cheap edge gate: redirect to /login when the session cookie is ABSENT on a
 // protected route. It does NOT validate the session (no API call) — real
 // validation is the getMe() call in the dashboard layout. This just avoids
 // flashing the app shell for obviously-unauthenticated visitors.
 
-const COOKIE_NAME = "sf_session";
-
 export function middleware(req: NextRequest) {
-  const hasSession = req.cookies.has(COOKIE_NAME);
-  if (!hasSession) {
-    const url = req.nextUrl.clone();
-    const next = req.nextUrl.pathname + req.nextUrl.search;
-    url.pathname = "/login";
-    url.search = `?next=${encodeURIComponent(next)}`;
-    return NextResponse.redirect(url);
+  const path = req.nextUrl.pathname + req.nextUrl.search;
+
+  if (!req.cookies.has(SESSION_COOKIE)) {
+    return NextResponse.redirect(new URL(loginPath(path), req.url));
   }
-  return NextResponse.next();
+
+  // Cookie present but unvalidated: forward, exposing the requested path so the
+  // server layout can preserve the deep link if getMe() ultimately rejects it.
+  const headers = new Headers(req.headers);
+  headers.set("x-pathname", path);
+  return NextResponse.next({ request: { headers } });
 }
 
 // Protect the authenticated surfaces only. Public pages, auth pages, the BFF,

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +35,7 @@ export function SignupForm() {
       router.push("/orgs");
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sign up failed");
+      toast.error(errorMessage(err, "Sign up failed"));
       setPending(false);
     }
   }

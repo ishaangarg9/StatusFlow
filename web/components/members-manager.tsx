@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
+import { formatDate } from "@/lib/utils";
 import type { Role } from "@/lib/types";
 import { useCan } from "@/components/can";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -50,10 +53,6 @@ import {
 const INVITE_ROLES: Role[] = ["admin", "member", "viewer"];
 const ALL_ROLES: Role[] = ["owner", "admin", "member", "viewer"];
 
-function fmt(ts: string) {
-  return new Date(ts).toLocaleDateString();
-}
-
 export function MembersManager({
   orgId,
   currentUserId,
@@ -61,6 +60,7 @@ export function MembersManager({
   orgId: string;
   currentUserId: string;
 }) {
+  const router = useRouter();
   const qc = useQueryClient();
   const canManage = useCan("member:role:update");
   const canRemove = useCan("member:remove");
@@ -78,8 +78,12 @@ export function MembersManager({
       toast.success("Role updated");
       qc.invalidateQueries({ queryKey: qk.members(orgId) });
       qc.invalidateQueries({ queryKey: qk.me });
+      // The caller's own role (e.g. after transferring ownership) is provided
+      // by the server [orgId] layout via RoleProvider, not a client query, so
+      // refresh the server tree to re-render role-gated controls accurately.
+      router.refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const removeMember = useMutation({
@@ -88,7 +92,7 @@ export function MembersManager({
       toast.success("Member removed");
       qc.invalidateQueries({ queryKey: qk.members(orgId) });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (
@@ -141,7 +145,7 @@ export function MembersManager({
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {fmt(m.createdAt)}
+                        {formatDate(m.createdAt)}
                       </TableCell>
                       <TableCell>
                         {canRemove && !isOwner && !isSelf && (
@@ -249,7 +253,7 @@ function InvitationsPanel({ orgId }: { orgId: string }) {
       setEmail("");
       qc.invalidateQueries({ queryKey: qk.invitations(orgId) });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   const revoke = useMutation({
@@ -258,7 +262,7 @@ function InvitationsPanel({ orgId }: { orgId: string }) {
       toast.success("Invitation revoked");
       qc.invalidateQueries({ queryKey: qk.invitations(orgId) });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(errorMessage(e)),
   });
 
   return (

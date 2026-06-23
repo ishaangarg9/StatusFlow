@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getMe } from "@/lib/auth";
+import { loginPath } from "@/lib/nav";
 import { RoleProvider } from "@/components/role-context";
 import { OrgNav } from "@/components/org-nav";
 
@@ -15,7 +17,7 @@ export default async function OrgLayout({
 }) {
   const { orgId } = await params;
   const me = await getMe();
-  if (!me) redirect("/login");
+  if (!me) redirect(loginPath((await headers()).get("x-pathname")));
 
   const membership = me.memberships.find((m) => m.orgId === orgId);
   if (!membership) notFound();

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ExternalLink } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
+import type { StatusPage } from "@/lib/types";
 import { useCan } from "@/components/can";
 import { MonitorPicker } from "@/components/monitor-picker";
 import { Button } from "@/components/ui/button";
@@ -23,7 +25,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-// There is no GET-one status-page endpoint; resolve it from the list.
+// There is no GET-one status-page endpoint; resolve it from the list, then hand
+// the resolved page to a form that owns its own draft state.
 export function StatusPageEditor({
   orgId,
   statusPageId,
@@ -31,41 +34,11 @@ export function StatusPageEditor({
   orgId: string;
   statusPageId: string;
 }) {
-  const router = useRouter();
-  const qc = useQueryClient();
-  const canPublish = useCan("statuspage:publish");
-
   const { data: pages, isLoading } = useQuery({
     queryKey: qk.statusPages(orgId),
     queryFn: () => api.listStatusPages(orgId),
   });
   const page = pages?.find((p) => p.id === statusPageId);
-
-  const [title, setTitle] = useState("");
-  const [isPublic, setIsPublic] = useState(false);
-  const [monitorIds, setMonitorIds] = useState<string[]>([]);
-
-  // Seed local form state once the page is loaded.
-  useEffect(() => {
-    if (page) {
-      setTitle(page.title);
-      setIsPublic(page.isPublic);
-      setMonitorIds(page.monitorIds);
-    }
-  }, [page]);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      await api.updateStatusPage(orgId, statusPageId, { title, isPublic });
-      await api.setStatusPageMonitors(orgId, statusPageId, monitorIds);
-    },
-    onSuccess: () => {
-      toast.success("Status page saved");
-      qc.invalidateQueries({ queryKey: qk.statusPages(orgId) });
-      router.refresh();
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
-  });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (!page) {
@@ -73,6 +46,41 @@ export function StatusPageEditor({
       <p className="text-sm text-muted-foreground">Status page not found.</p>
     );
   }
+
+  // key forces a fresh draft when the resolved page identity changes (e.g.
+  // navigating between pages), but a background refetch of the same page does
+  // NOT remount the form, so in-progress edits survive.
+  return <StatusPageForm key={page.id} orgId={orgId} page={page} />;
+}
+
+function StatusPageForm({ orgId, page }: { orgId: string; page: StatusPage }) {
+  const router = useRouter();
+  const qc = useQueryClient();
+  const canPublish = useCan("statuspage:publish");
+
+  // Draft state is initialized from the loaded page once, at mount — a
+  // background query refetch never clobbers what the user is typing.
+  const [title, setTitle] = useState(page.title);
+  const [isPublic, setIsPublic] = useState(page.isPublic);
+  const [monitorIds, setMonitorIds] = useState<string[]>(page.monitorIds);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      await api.updateStatusPage(orgId, page.id, { title, isPublic });
+      await api.setStatusPageMonitors(orgId, page.id, monitorIds);
+    },
+    onSuccess: () => {
+      toast.success("Status page saved");
+      router.refresh();
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+    // Always re-sync from the server: the two writes are not atomic, so on a
+    // partial failure (first committed, second did not) the cache must reflect
+    // actual server state rather than the optimistic draft.
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.statusPages(orgId) });
+    },
+  });
 
   return (
     <Card>
