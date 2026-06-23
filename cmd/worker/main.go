@@ -5,19 +5,26 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	stdhttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ishaangarg9/statusflow/internal/db"
 	"github.com/ishaangarg9/statusflow/internal/domain/invitations"
+	"github.com/ishaangarg9/statusflow/internal/ops"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 	"github.com/ishaangarg9/statusflow/internal/worker"
 )
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
+	log.Info("starting worker", "version", version)
 
 	cfg, err := shared.LoadConfig()
 	if err != nil {
@@ -35,10 +42,20 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Dev transport: invitations are written to a filesystem outbox (the raw
-	// token is delivered out-of-band, never logged). Swap NewOutboxMailer for a
-	// real SMTP/provider transport before any non-dev deploy.
-	deliverer := invitations.NewDeliverer(pool, invitations.NewOutboxMailer(""), log)
+	// Invitation transport: Resend when configured, else the dev filesystem
+	// outbox. Either way the raw token leaves the process ONLY through the Mailer
+	// and is never logged or persisted.
+	mailer := pickMailer(cfg, log)
+	deliverer := invitations.NewDeliverer(pool, mailer, log)
+
+	// Ops server: liveness/readiness/metrics on a dedicated, non-public port.
+	opsSrv := ops.NewServer(cfg.OpsAddr, pool, log)
+	go func() {
+		log.Info("ops listening", "addr", cfg.OpsAddr)
+		if err := opsSrv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+			log.Error("ops listen", "err", err)
+		}
+	}()
 
 	w := worker.New(pool, log, worker.Config{
 		Tick:                     cfg.WorkerTick,
@@ -51,8 +68,31 @@ func main() {
 			return deliverer.DrainOnce(ctx, cfg.WorkerBatch, cfg.WorkerClaimLeaseSeconds)
 		},
 	})
-	if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Error("worker", "err", err)
+
+	// Run blocks until ctx is cancelled (SIGTERM); the worker's own loop drains
+	// in-flight checks before returning (see worker.Run).
+	runErr := w.Run(ctx)
+
+	shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := opsSrv.Shutdown(shutCtx); err != nil {
+		log.Error("ops shutdown", "err", err)
+	}
+
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		log.Error("worker", "err", runErr)
 		os.Exit(1)
 	}
+}
+
+// pickMailer returns the Resend transport when an API key is configured,
+// otherwise the dev filesystem outbox. Config validation already guarantees
+// RESEND_FROM is present whenever the key is set.
+func pickMailer(cfg *shared.Config, log *slog.Logger) invitations.Mailer {
+	if cfg.ResendAPIKey != "" {
+		log.Info("invitation transport: resend", "from", cfg.ResendFrom)
+		return invitations.NewResendMailer(cfg.ResendAPIKey, cfg.ResendFrom, cfg.AppBaseURL)
+	}
+	log.Warn("invitation transport: dev filesystem outbox (set RESEND_API_KEY for real delivery)")
+	return invitations.NewOutboxMailer("")
 }

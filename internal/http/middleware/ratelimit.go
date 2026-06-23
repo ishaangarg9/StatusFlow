@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/ishaangarg9/statusflow/internal/metrics"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 )
 
@@ -45,6 +46,7 @@ func IPRateLimit(perMinute int) func(http.Handler) http.Handler {
 				ip = r.RemoteAddr
 			}
 			if !get(ip).Allow() {
+				metrics.ThrottleHits.WithLabelValues("ip").Inc()
 				shared.WriteErr(w, shared.RateLimited())
 				return
 			}

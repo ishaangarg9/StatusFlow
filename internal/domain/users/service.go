@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ishaangarg9/statusflow/internal/auth"
+	"github.com/ishaangarg9/statusflow/internal/metrics"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 )
 
@@ -123,6 +124,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 	// when the password is now correct. Keyed by email so it survives an
 	// attacker rotating source IPs past the per-IP limiter.
 	if !s.throttle.Allowed(email) {
+		metrics.ThrottleHits.WithLabelValues("login").Inc()
 		return "", nil, shared.RateLimited()
 	}
 	var (

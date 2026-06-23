@@ -1,0 +1,26 @@
+# Keep the build context small and free of anything secret or irrelevant to the
+# Go build. The Dockerfiles only need go.mod/go.sum + the Go source.
+.git
+.github
+.gitignore
+*.md
+docs/
+web/
+deploy/
+
+# Local env / secrets — never ship these into an image layer.
+.env
+.env.*
+!.env.example
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+
+# Test + tooling artifacts
+*.test
+coverage.out
+Dockerfile*
+docker-compose.yml
+Makefile

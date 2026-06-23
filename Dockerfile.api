@@ -1,0 +1,30 @@
+# Multi-stage build for cmd/api. Produces a static, non-root, distroless image.
+#
+# Health is served by the ops listener (internal/ops) on OPS_ADDR:
+#   liveness  GET /healthz   readiness GET /readyz   scrape GET /metrics
+# In Kubernetes these are wired as httpGet probes (see the Helm chart, P11);
+# distroless has no shell, so there is intentionally no Docker HEALTHCHECK.
+
+ARG GO_VERSION=1.25
+FROM golang:${GO_VERSION}-bookworm AS build
+WORKDIR /src
+
+# Cache modules separately from source for faster rebuilds.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Static, stripped binary. CGO off so it runs on distroless/static.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/api ./cmd/api
+
+# nonroot variant runs as uid 65532; static has no libc (CGO is off).
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/api /usr/local/bin/api
+USER nonroot:nonroot
+EXPOSE 8080 9090
+ENTRYPOINT ["/usr/local/bin/api"]

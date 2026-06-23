@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/ishaangarg9/statusflow/internal/metrics"
 	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
 
@@ -131,6 +132,8 @@ func (w *Worker) runCheck(ctx context.Context, m Monitor) {
 	defer cancel()
 
 	res := w.pinger.Check(cctx, m)
+	metrics.ChecksTotal.WithLabelValues(res.Status).Inc()
+	metrics.CheckDuration.Observe(float64(res.LatencyMs) / 1000.0)
 
 	// Persist with the parent ctx (not cctx): the check's own deadline has
 	// served its purpose, and we don't want a borderline-timed-out check to also

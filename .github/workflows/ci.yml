@@ -48,8 +48,20 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
+
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          staticcheck ./...
 
       # The authz gate: exhaustive permission matrix + no inline role checks
       # outside internal/authz/ (doc 07 §9.2 and §9.3). No DB needed.
@@ -60,3 +72,30 @@ jobs:
       # ownership-invariant regression, against real Postgres as app_user.
       - name: Test (with RLS, as app_user)
         run: go test ./...
+
+  # Frontend gate: typecheck + production build. Lint is deferred until the real
+  # UI lands in P9 (the skeleton has no eslint config yet).
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build

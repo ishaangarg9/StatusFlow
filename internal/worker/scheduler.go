@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ishaangarg9/statusflow/internal/metrics"
 )
 
 type Worker struct {
@@ -83,6 +85,8 @@ func (w *Worker) Run(ctx context.Context) error {
 				w.log.Error("claim", "err", err)
 				continue
 			}
+			metrics.ClaimBatchSize.Set(float64(len(monitors)))
+			metrics.MonitorsClaimed.Add(float64(len(monitors)))
 			if len(monitors) == 0 {
 				continue
 			}
@@ -123,6 +127,7 @@ func (w *Worker) startInviteDrain(ctx context.Context) {
 			if n, err := w.drainInvites(ctx); err != nil {
 				w.log.Error("drain invitations", "err", err)
 			} else if n > 0 {
+				metrics.InvitationsDelivered.Add(float64(n))
 				w.log.Info("delivered invitations", "count", n)
 			}
 		}()

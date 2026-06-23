@@ -61,6 +61,7 @@ func (s *Server) Routes() nethttp.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.RequestContext(s.log))
+	r.Use(middleware.Metrics)
 
 	// Public, unauthenticated surface — hardened, read-only projection.
 	r.Route("/api/public", func(r chi.Router) {
