@@ -3,6 +3,7 @@ package statuspages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ishaangarg9/statusflow/internal/authz"
 	"github.com/ishaangarg9/statusflow/internal/domain/audit"
+	"github.com/ishaangarg9/statusflow/internal/entitlements"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
@@ -150,6 +152,22 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 	var v StatusPageView
 	v.MonitorIDs = []uuid.UUID{}
 	err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
+		// Entitlement gate: the org's plan caps how many status pages it may have.
+		plan, err := entitlements.PlanForOrg(ctx, tx, ac.OrgID)
+		if err != nil {
+			return err
+		}
+		lim := entitlements.LimitsFor(plan)
+		var count int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM status_pages WHERE org_id = $1`, ac.OrgID).Scan(&count); err != nil {
+			return err
+		}
+		if !entitlements.WithinLimit(count, lim.MaxStatusPages) {
+			return shared.PlanLimit(fmt.Sprintf(
+				"Your plan allows up to %d status page(s). Upgrade to add more.", lim.MaxStatusPages))
+		}
+
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO status_pages (org_id, slug, title, is_public)
 			VALUES ($1, $2, $3, $4)

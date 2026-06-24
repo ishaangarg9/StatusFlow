@@ -215,6 +215,23 @@ Follow every step — skipping one is how isolation bugs are born.
    (linked from the README index): the claim, the four-layer defense, the per-table
    isolation + authz evidence map, and how to run the proof. **Build path complete.**
 
+**Post-build deployment phases** (planned in `context-summary.md`, P8–P16):
+P8 (productionize backend: Resend, Docker, ops/metrics, CI gates) ✅,
+P9 (full demo UI: Next.js + BFF + shadcn/ui) ✅, and
+**P10 (billing, Stripe test mode) ✅** — the `subscriptions` tenant table
+(migration 019, via the §5 recipe: RLS, `WithOrgTx`, audit, isolation + authz
+tests), server-enforced plan entitlements (`internal/entitlements`: Free = 3
+monitors / 1 status page, Pro = unlimited; checked in `monitors.Create` /
+`statuspages.Create`, 402 over limit), a stdlib-only Stripe client
+(`internal/stripe`: Checkout, Portal, HMAC webhook verify — no SDK, matching the
+Resend precedent), and the billing domain (`internal/domain/billing`) whose
+**signature-verified webhook is the ONLY writer of plan state** — it resolves the
+org from the verified event (no new SECURITY DEFINER escape hatch; still five) and
+upserts inside `WithOrgTx`. `billing:read` (owner/admin) / `billing:manage`
+(owner-only) added to the matrix. Stripe config is all-or-nothing and inert when
+unset. See `09-billing-and-go-live.md` (incl. the deferred flip-to-live checklist).
+Remaining: P11 (Helm/k8s) onward.
+
 > Update this section as phases complete. Keep it honest about where the project actually is.
 
 ---

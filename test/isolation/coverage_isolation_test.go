@@ -191,3 +191,44 @@ func TestAuditLogsAreOrgIsolated(t *testing.T) {
 		t.Fatal("expected RLS WITH CHECK to reject an audit_log forged into org B from org A")
 	}
 }
+
+// TestSubscriptionsAreOrgIsolated proves the billing projection (Phase 10) obeys
+// RLS like every tenant table: an org's plan/subscription row is invisible from
+// another org even with no app-level filter, and WITH CHECK refuses planting a
+// subscription into a foreign org. Billing state is money-adjacent, so its
+// isolation matters as much as the product tables'.
+func TestSubscriptionsAreOrgIsolated(t *testing.T) {
+	ctx, pool, s := setup(t)
+
+	// Org A subscribes (plant a row in A's own context).
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgA, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO subscriptions (org_id, plan, status, stripe_customer_id)
+			VALUES ($1, 'pro', 'active', 'cus_isoA')`, s.orgA)
+		return err
+	}); err != nil {
+		t.Fatalf("seed subscription in org A: %v", err)
+	}
+
+	// Org B must not see A's subscription even without a WHERE filter.
+	var visible int
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgB, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM subscriptions`).Scan(&visible)
+	}); err != nil {
+		t.Fatalf("count subscriptions in org B: %v", err)
+	}
+	if visible != 0 {
+		t.Fatalf("org A's subscription leaked into org B (saw %d)", visible)
+	}
+
+	// WITH CHECK refuses planting a subscription into org B from org A's context —
+	// so one org can never upgrade (or downgrade) another's plan.
+	if err := tenancy.WithOrgTx(ctx, pool, s.orgA, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO subscriptions (org_id, plan, status)
+			VALUES ($1, 'pro', 'active')`, s.orgB)
+		return err
+	}); err == nil {
+		t.Fatal("expected RLS WITH CHECK to reject a subscription planted into org B from org A")
+	}
+}

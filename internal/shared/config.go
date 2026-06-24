@@ -39,6 +39,15 @@ type Config struct {
 
 	RateLimitLoginPerMin  int
 	RateLimitAcceptPerMin int
+
+	// Stripe (test mode in this phase). All optional: when StripeSecretKey is
+	// empty the app is "monetization-ready but inert" — every org is Free and the
+	// checkout/portal endpoints return a clear 422 rather than failing. The
+	// webhook secret authenticates inbound events; the price id is the Pro plan.
+	// success/cancel + portal return URLs are built from AppBaseURL.
+	StripeSecretKey     string
+	StripeWebhookSecret string
+	StripePriceID       string
 }
 
 func LoadConfig() (*Config, error) {
@@ -100,12 +109,30 @@ func LoadConfig() (*Config, error) {
 		IncidentResolveThreshold: optInt("INCIDENT_RESOLVE_THRESHOLD", 2),
 		RateLimitLoginPerMin:     optInt("RATE_LIMIT_LOGIN_PER_MIN", 10),
 		RateLimitAcceptPerMin:    optInt("RATE_LIMIT_ACCEPT_PER_MIN", 20),
+		StripeSecretKey:          strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
+		StripeWebhookSecret:      strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
+		StripePriceID:            strings.TrimSpace(os.Getenv("STRIPE_PRICE_ID")),
 	}
 
 	// Fail fast on a half-configured transport: a Resend key with no From would
 	// otherwise surface only when the worker first tries to deliver an invite.
 	if c.ResendAPIKey != "" && c.ResendFrom == "" {
 		errs = append(errs, "RESEND_FROM (required when RESEND_API_KEY is set)")
+	}
+
+	// Stripe is all-or-nothing: a secret key with no price id, webhook secret, or
+	// base URL would otherwise fail only mid-checkout or silently drop webhooks
+	// (leaving plans stuck). Either configure billing fully or leave it off.
+	if c.StripeSecretKey != "" {
+		if c.StripePriceID == "" {
+			errs = append(errs, "STRIPE_PRICE_ID (required when STRIPE_SECRET_KEY is set)")
+		}
+		if c.StripeWebhookSecret == "" {
+			errs = append(errs, "STRIPE_WEBHOOK_SECRET (required when STRIPE_SECRET_KEY is set)")
+		}
+		if c.AppBaseURL == "" {
+			errs = append(errs, "APP_BASE_URL (required when STRIPE_SECRET_KEY is set)")
+		}
 	}
 
 	if len(errs) > 0 {

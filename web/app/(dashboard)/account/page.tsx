@@ -55,11 +55,15 @@ export default async function AccountPage() {
         <CardHeader>
           <CardTitle>Billing</CardTitle>
           <CardDescription>
-            You&apos;re on the Free plan. Billing arrives soon (test mode).
+            Plans and billing are managed per organization, from each
+            organization&apos;s Billing page.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex gap-2">
           <Button asChild variant="outline">
+            <Link href="/orgs">Your organizations</Link>
+          </Button>
+          <Button asChild variant="ghost">
             <Link href="/pricing">View plans</Link>
           </Button>
         </CardContent>

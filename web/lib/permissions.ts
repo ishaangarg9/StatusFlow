@@ -25,11 +25,14 @@ export type Action =
   | "incident:resolve"
   | "statuspage:read"
   | "statuspage:publish"
-  | "audit:read";
+  | "audit:read"
+  | "billing:read"
+  | "billing:manage";
 
 const ALL: Role[] = ["owner", "admin", "member", "viewer"];
 const MANAGE: Role[] = ["owner", "admin"];
 const OPERATE: Role[] = ["owner", "admin", "member"];
+const OWNER: Role[] = ["owner"];
 
 const MATRIX: Record<Action, Role[]> = {
   "org:read": ALL,
@@ -50,6 +53,8 @@ const MATRIX: Record<Action, Role[]> = {
   "statuspage:read": ALL,
   "statuspage:publish": MANAGE,
   "audit:read": MANAGE,
+  "billing:read": MANAGE,
+  "billing:manage": OWNER,
 };
 
 export function can(role: Role, action: Action): boolean {

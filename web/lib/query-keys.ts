@@ -20,4 +20,6 @@ export const qk = {
 
   audit: (orgId: string, filters?: { action?: string; actor?: string }) =>
     ["audit", orgId, filters ?? {}] as const,
+
+  subscription: (orgId: string) => ["subscription", orgId] as const,
 };

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ishaangarg9/statusflow/internal/auth"
 	"github.com/ishaangarg9/statusflow/internal/domain/audit"
+	"github.com/ishaangarg9/statusflow/internal/domain/billing"
 	"github.com/ishaangarg9/statusflow/internal/domain/incidents"
 	"github.com/ishaangarg9/statusflow/internal/domain/invitations"
 	"github.com/ishaangarg9/statusflow/internal/domain/memberships"
@@ -22,6 +23,7 @@ import (
 	"github.com/ishaangarg9/statusflow/internal/domain/users"
 	"github.com/ishaangarg9/statusflow/internal/http/middleware"
 	"github.com/ishaangarg9/statusflow/internal/shared"
+	"github.com/ishaangarg9/statusflow/internal/stripe"
 )
 
 type Server struct {
@@ -58,6 +60,18 @@ func (s *Server) Routes() nethttp.Handler {
 	spH := statuspages.NewHandler(statuspages.NewService(s.pool))
 	audH := audit.NewHandler(audit.NewService(s.pool))
 
+	// Billing: the Stripe client is nil unless a secret key is configured, in
+	// which case the domain runs inert (every org Free; checkout/portal 422).
+	var stripeClient *stripe.Client
+	if s.cfg.StripeSecretKey != "" {
+		stripeClient = stripe.New(s.cfg.StripeSecretKey)
+	}
+	billingH := billing.NewHandler(billing.NewService(s.pool, stripeClient, billing.Config{
+		PriceID:       s.cfg.StripePriceID,
+		WebhookSecret: s.cfg.StripeWebhookSecret,
+		AppBaseURL:    s.cfg.AppBaseURL,
+	}, s.log))
+
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.RequestContext(s.log))
@@ -66,6 +80,12 @@ func (s *Server) Routes() nethttp.Handler {
 	// Public, unauthenticated surface — hardened, read-only projection.
 	r.Route("/api/public", func(r chi.Router) {
 		spH.MountPublic(r)
+	})
+
+	// Stripe webhook: unauthenticated (Stripe calls it directly); trust comes
+	// solely from the signature check in the billing service, not the session.
+	r.Route("/api/stripe", func(r chi.Router) {
+		billingH.MountPublic(r)
 	})
 
 	// Auth endpoints.
@@ -105,6 +125,7 @@ func (s *Server) Routes() nethttp.Handler {
 			incH.Mount(r)
 			spH.MountOrgScoped(r)
 			audH.Mount(r)
+			billingH.MountOrgScoped(r)
 		})
 	})
 
