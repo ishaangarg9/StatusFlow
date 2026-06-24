@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -106,10 +107,9 @@ func (s *Service) Get(ctx context.Context, ac authz.AuthContext) (*SubscriptionV
 			return err
 		}
 
-		effective, err := entitlements.PlanForOrg(ctx, tx, ac.OrgID)
-		if err != nil {
-			return err
-		}
+		// Effective plan from the row already in hand (no second query) — the same
+		// rule the API enforces, so the screen and the gate never disagree.
+		effective := entitlements.EffectivePlan(entitlements.Plan(v.Plan), v.Status)
 		lim := entitlements.LimitsFor(effective)
 		v.Limits = Limits{MaxMonitors: lim.MaxMonitors, MaxStatusPages: lim.MaxStatusPages}
 
@@ -140,21 +140,23 @@ func (s *Service) StartCheckout(ctx context.Context, ac authz.AuthContext) (stri
 		return "", shared.Validation("Billing is not configured on this deployment.")
 	}
 
-	// Look up any existing customer (RLS-scoped) and the owner's email (global
-	// users table) to seed the session.
+	// One tx: read any existing customer (RLS-scoped) and audit the intent
+	// together, BEFORE the external Stripe call. Auditing the attempt up front
+	// (rather than after a successful session) keeps the audit atomic with a
+	// single transaction and records the action even if Stripe then errors.
 	var customerID string
 	if err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
-		var c *string
-		err := tx.QueryRow(ctx,
-			`SELECT stripe_customer_id FROM subscriptions WHERE org_id = $1`, ac.OrgID,
-		).Scan(&c)
+		c, err := customerIDFromTx(ctx, tx, ac.OrgID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if c != nil {
-			customerID = *c
-		}
-		return nil
+		customerID = c
+		return audit.Record(ctx, tx, audit.Entry{
+			OrgID:        ac.OrgID,
+			ActorUserID:  ac.UserID,
+			Action:       "billing:checkout_start",
+			ResourceType: "subscription",
+		})
 	}); err != nil {
 		return "", shared.MapAppErr(err)
 	}
@@ -176,19 +178,23 @@ func (s *Service) StartCheckout(ctx context.Context, ac authz.AuthContext) (stri
 		s.log.Error("stripe checkout", "err", err, "org_id", ac.OrgID)
 		return "", shared.Internal(err)
 	}
-
-	// Audit the intent (no money has moved yet — the webhook records the result).
-	if err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
-		return audit.Record(ctx, tx, audit.Entry{
-			OrgID:        ac.OrgID,
-			ActorUserID:  ac.UserID,
-			Action:       "billing:checkout_start",
-			ResourceType: "subscription",
-		})
-	}); err != nil {
-		return "", shared.MapAppErr(err)
-	}
 	return url, nil
+}
+
+// customerIDFromTx reads the org's stored Stripe customer id within an existing
+// org-scoped tx. Returns ("", pgx.ErrNoRows) when the org has no subscription row
+// yet, and ("", nil) when the row exists but the customer is unset — the two
+// callers (checkout/portal) distinguish those cases themselves.
+func customerIDFromTx(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (string, error) {
+	var c *string
+	if err := tx.QueryRow(ctx,
+		`SELECT stripe_customer_id FROM subscriptions WHERE org_id = $1`, orgID).Scan(&c); err != nil {
+		return "", err
+	}
+	if c == nil {
+		return "", nil
+	}
+	return *c, nil
 }
 
 // StartPortal opens a Stripe Billing Portal session for the org's customer and
@@ -202,37 +208,19 @@ func (s *Service) StartPortal(ctx context.Context, ac authz.AuthContext) (string
 		return "", shared.Validation("Billing is not configured on this deployment.")
 	}
 
+	// One tx: confirm the org has a Stripe customer and audit the intent together.
+	// No customer (no subscription row, or the row predates checkout) → 422; the
+	// shared.Validation returned from the closure rolls the tx back (no audit).
 	var customerID string
 	if err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
-		var c *string
-		err := tx.QueryRow(ctx,
-			`SELECT stripe_customer_id FROM subscriptions WHERE org_id = $1`, ac.OrgID,
-		).Scan(&c)
+		c, err := customerIDFromTx(ctx, tx, ac.OrgID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && c == "") {
+			return shared.Validation("No billing account yet. Subscribe first.")
+		}
 		if err != nil {
-			return err // ErrNoRows -> no subscription yet
+			return err
 		}
-		if c != nil {
-			customerID = *c
-		}
-		return nil
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", shared.Validation("No billing account yet. Subscribe first.")
-		}
-		return "", shared.MapAppErr(err)
-	}
-	if customerID == "" {
-		return "", shared.Validation("No billing account yet. Subscribe first.")
-	}
-
-	url, err := s.stripe.CreatePortalSession(ctx, customerID,
-		s.cfg.AppBaseURL+"/orgs/"+ac.OrgID.String()+"/billing")
-	if err != nil {
-		s.log.Error("stripe portal", "err", err, "org_id", ac.OrgID)
-		return "", shared.Internal(err)
-	}
-
-	if err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
+		customerID = c
 		return audit.Record(ctx, tx, audit.Entry{
 			OrgID:        ac.OrgID,
 			ActorUserID:  ac.UserID,
@@ -241,6 +229,13 @@ func (s *Service) StartPortal(ctx context.Context, ac authz.AuthContext) (string
 		})
 	}); err != nil {
 		return "", shared.MapAppErr(err)
+	}
+
+	url, err := s.stripe.CreatePortalSession(ctx, customerID,
+		s.cfg.AppBaseURL+"/orgs/"+ac.OrgID.String()+"/billing")
+	if err != nil {
+		s.log.Error("stripe portal", "err", err, "org_id", ac.OrgID)
+		return "", shared.Internal(err)
 	}
 	return url, nil
 }

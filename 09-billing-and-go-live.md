@@ -12,6 +12,7 @@ layer and the checklist to flip it to live.
 | Piece | Where |
 |-------|-------|
 | `subscriptions` tenant table (one row per org) | migration `019_billing` |
+| Webhook hardening (ordering column + customer→org fallback fn) | migration `020_billing_webhook_hardening` |
 | Plan → limits mapping (the enforced caps) | `internal/entitlements` |
 | Stripe client (Checkout, Portal, webhook verify) — stdlib only, no SDK | `internal/stripe` |
 | Billing service (read sub, start checkout/portal, apply webhook) | `internal/domain/billing` |
@@ -55,10 +56,32 @@ Stripe  → POST /api/stripe/webhook                 (unauthenticated; trusted O
   constant-time compare) and rejects stale timestamps (replay defense). A forged
   body or wrong secret → 400, and no row is written (proven in `test/billing`).
 - The org is taken from the **verified** event: `client_reference_id` on
-  checkout, and `subscription.metadata.org_id` (set at checkout time) on every
-  later `customer.subscription.*` event. So the webhook needs **no SECURITY
-  DEFINER escape hatch** — it `WithOrgTx(org)` like any authenticated write, and
-  RLS still applies. (The five existing escape-hatch functions are unchanged.)
+  checkout, `subscription.metadata.org_id` (set at checkout time) on every later
+  `customer.subscription.*` event, and — if an event ever arrives without either
+  (e.g. a subscription created in the Stripe dashboard) — a fallback lookup by the
+  stored Stripe customer id. That fallback is the one cross-tenant read with no
+  org context, so it goes through a **SECURITY DEFINER** function
+  `subscription_org_by_customer` (migration 020 — the **6th** sanctioned escape
+  hatch; returns only the org id, EXECUTE-granted to `app_user` alone). The
+  subsequent write still runs inside `WithOrgTx(org)` under RLS.
+
+### Webhook robustness (Stripe is at-least-once and unordered)
+
+- **Ordering / idempotency**: each apply records the event's `created` time in
+  `subscriptions.last_stripe_event_at`, and the upsert refuses an event older
+  than the last applied one. So a replayed (within the 5-min signature tolerance)
+  or out-of-order `subscription.updated(active)` can't overwrite a later
+  `subscription.deleted` and silently re-grant Pro.
+- **Payment not assumed**: `checkout.session.completed` only sets `active` when
+  the session is actually `paid` (or `no_payment_required`); otherwise it records
+  `incomplete` (which degrades to Free) and waits for the `subscription.*` events,
+  so async-payment flows don't grant Pro before the money settles.
+- **Unknown status clamped**: a `subscription.status` value outside our CHECK
+  (e.g. one Stripe adds later) is clamped to `incomplete` rather than failing the
+  write and wedging the webhook in a retry loop.
+- **Customer/org collision**: a `stripe_customer_id` unique-index violation (one
+  customer mapped to two orgs) is acked (logged), not retried — a data conflict a
+  retry can't fix.
 
 ### Invariant compliance (CLAUDE.md §2 / §5)
 

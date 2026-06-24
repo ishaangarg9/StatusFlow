@@ -55,11 +55,22 @@ func WithinLimit(current, limit int) bool {
 	return limit == Unlimited || current < limit
 }
 
-// PlanForOrg reads the active plan for an org from the local subscriptions
-// projection, inside an existing org-scoped transaction (RLS armed). The org is
-// Pro only when it has a row whose plan is 'pro' AND whose status still entitles
-// it (active or trialing) — a canceled/past_due/unpaid subscription falls back
-// to Free so a lapsed payment immediately loses the paid caps. No row => Free.
+// EffectivePlan maps a stored (plan, status) pair to the plan actually in force.
+// An org is Pro only when its plan is 'pro' AND its status still entitles it
+// (active or trialing) — a canceled/past_due/unpaid subscription falls back to
+// Free so a lapsed payment immediately loses the paid caps. The single source of
+// the "is this org entitled to Pro?" rule, shared by PlanForOrg and any caller
+// that already has the row in hand (so it need not re-query).
+func EffectivePlan(plan Plan, status string) Plan {
+	if plan == PlanPro && (status == "active" || status == "trialing") {
+		return PlanPro
+	}
+	return PlanFree
+}
+
+// PlanForOrg reads the effective plan for an org from the local subscriptions
+// projection, inside an existing org-scoped transaction (RLS armed). No row =>
+// Free.
 func PlanForOrg(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (Plan, error) {
 	var plan, status string
 	err := tx.QueryRow(ctx,
@@ -71,8 +82,5 @@ func PlanForOrg(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (Plan, error) {
 		}
 		return PlanFree, err
 	}
-	if Plan(plan) == PlanPro && (status == "active" || status == "trialing") {
-		return PlanPro, nil
-	}
-	return PlanFree, nil
+	return EffectivePlan(Plan(plan), status), nil
 }

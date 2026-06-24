@@ -226,10 +226,13 @@ monitors / 1 status page, Pro = unlimited; checked in `monitors.Create` /
 (`internal/stripe`: Checkout, Portal, HMAC webhook verify — no SDK, matching the
 Resend precedent), and the billing domain (`internal/domain/billing`) whose
 **signature-verified webhook is the ONLY writer of plan state** — it resolves the
-org from the verified event (no new SECURITY DEFINER escape hatch; still five) and
-upserts inside `WithOrgTx`. `billing:read` (owner/admin) / `billing:manage`
-(owner-only) added to the matrix. Stripe config is all-or-nothing and inert when
-unset. See `09-billing-and-go-live.md` (incl. the deferred flip-to-live checklist).
+org from the verified event (metadata first; a customer-id fallback via the **6th**
+SECURITY DEFINER escape hatch `subscription_org_by_customer`, migration 020) and
+upserts inside `WithOrgTx`, with an ordering/idempotency guard
+(`last_stripe_event_at`) so a replayed/out-of-order event can't move plan state
+backwards. `billing:read` (owner/admin) / `billing:manage` (owner-only) added to
+the matrix. Stripe config is all-or-nothing and inert when unset. See
+`09-billing-and-go-live.md` (incl. the deferred flip-to-live checklist).
 Remaining: P11 (Helm/k8s) onward.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.

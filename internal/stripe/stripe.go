@@ -73,8 +73,10 @@ func (c *Client) CreateCheckoutSession(ctx context.Context, p CheckoutParams) (s
 	form.Set("cancel_url", p.CancelURL)
 	form.Set("client_reference_id", p.OrgID)
 	form.Set("subscription_data[metadata][org_id]", p.OrgID)
-	// Bind the tenant to the customer too, so portal-initiated changes that only
-	// carry the customer can still be traced back if metadata is ever stripped.
+	// Bind the tenant on the session metadata too. The authoritative path is the
+	// subscription metadata above (it rides every customer.subscription.* event);
+	// if an event ever arrives without it, the webhook falls back to resolving the
+	// org from the stored Stripe customer id (subscription_org_by_customer).
 	form.Set("metadata[org_id]", p.OrgID)
 	if p.CustomerID != "" {
 		form.Set("customer", p.CustomerID)
@@ -156,11 +158,14 @@ func (c *Client) post(ctx context.Context, path string, form url.Values, out any
 
 // Event is the decoded envelope of a webhook event. Object is the raw event
 // payload (a Checkout Session or a Subscription, per Type) — the caller decodes
-// it into the right shape.
+// it into the right shape. Created is the event's Unix timestamp, used by the
+// caller to reject stale/out-of-order deliveries (Stripe does not guarantee
+// ordering).
 type Event struct {
-	ID     string          `json:"id"`
-	Type   string          `json:"type"`
-	Object json.RawMessage // data.object, lifted out for convenience
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Created int64           `json:"created"`
+	Object  json.RawMessage // data.object, lifted out for convenience
 }
 
 // signatureTolerance bounds the clock skew between Stripe and us; an event whose
@@ -212,16 +217,17 @@ func VerifyWebhook(payload []byte, sigHeader, secret string, now time.Time) (*Ev
 	}
 
 	var raw struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-		Data struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Created int64  `json:"created"`
+		Data    struct {
 			Object json.RawMessage `json:"object"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		return nil, fmt.Errorf("stripe: decode event: %w", err)
 	}
-	return &Event{ID: raw.ID, Type: raw.Type, Object: raw.Data.Object}, nil
+	return &Event{ID: raw.ID, Type: raw.Type, Created: raw.Created, Object: raw.Data.Object}, nil
 }
 
 // parseSignatureHeader splits a "t=...,v1=...,v1=..." header into its timestamp
