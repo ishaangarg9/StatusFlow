@@ -43,6 +43,15 @@ Container images (built from the repo root unless noted):
   metadata) / CGNAT — defence-in-depth behind the in-process SSRF dial guard.
   *(Enforced by a NP-capable CNI: k3s yes; kind's kindnet renders but does not
   enforce — validate there by manifest review.)*
+- **Default-deny egress, opt back in per component.** The shared `allow-dns`
+  policy selects *every* `app.kubernetes.io/part-of: statusflow` pod, which flips
+  them all to **default-deny-egress** — so each component (api, worker, web,
+  migrate) needs its own egress policy granting exactly what it talks to (DB,
+  internet, the api Service). **Adding a new component with the `part-of` label
+  silently loses all egress except DNS until you give it a policy** — this is the
+  trap the migration Job hit (no Postgres rule → the pre-install hook hangs on a
+  NP-enforcing CNI; invisible on kindnet). When you add a workload, add its
+  egress policy in the same PR.
 - **The API origin never reaches the browser.** Only `web` (the Next BFF) is on
   the Ingress. The one exception is `/api/stripe/webhook`, routed straight to the
   API because Stripe calls it server-to-server (HMAC-signed, no cookie).
