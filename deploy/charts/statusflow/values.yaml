@@ -1,0 +1,204 @@
+# StatusFlow application chart.
+#
+# Invariants this chart must preserve (CLAUDE.md §2):
+#   - The migration Job uses the PRIVILEGED (superuser) DSN; api + worker get
+#     ONLY the app_user DSN. The privileged DSN never lands on a long-running pod.
+#   - SESSION_COOKIE_SECURE=true in any real deployment; the BFF keeps sf_session
+#     first-party + HttpOnly.
+#   - The worker's egress is constrained by a NetworkPolicy (defence-in-depth on
+#     top of the in-process SSRF dial guard).
+#   - The ops port (metrics/health) is never exposed on the public Ingress.
+
+nameOverride: ""
+fullnameOverride: ""
+
+images:
+  # repository:tag for each component. registry is prefixed if set.
+  registry: ""
+  pullPolicy: IfNotPresent
+  api:
+    repository: statusflow-api
+    tag: dev
+  worker:
+    repository: statusflow-worker
+    tag: dev
+  web:
+    repository: statusflow-web
+    tag: dev
+  migrate:
+    repository: statusflow-migrate
+    tag: dev
+
+# --- Database wiring -------------------------------------------------------
+# The chart assembles two DSNs from these values:
+#   app_user DSN  -> api + worker      (DATABASE_URL)
+#   superuser DSN -> migration Job ONLY (MIGRATIONS_DATABASE_URL)
+# For dev/local-kind the passwords are inlined and a Secret is rendered. In the
+# cluster (P13) set db.secret.create=false and supply db.secret.existingSecret
+# (a Sealed Secret) carrying DATABASE_URL + MIGRATIONS_DATABASE_URL directly.
+db:
+  host: statusflow-postgres
+  port: 5432
+  name: statusflow
+  sslmode: disable
+  appUser: app_user
+  appUserPassword: devpassword
+  superuser: postgres
+  superuserPassword: postgres
+  secret:
+    create: true
+    existingSecret: ""
+
+# --- Non-secret app config (rendered into a ConfigMap) ---------------------
+config:
+  apiAddr: ":8080"
+  opsAddr: ":9090"
+  sessionTTLDays: 14
+  sessionCookieName: sf_session
+  sessionCookieSecure: true
+  worker:
+    tickMs: 5000
+    batch: 50
+    concurrency: 20
+    claimLeaseSeconds: 90
+  incident:
+    openThreshold: 2
+    resolveThreshold: 2
+  rateLimit:
+    loginPerMin: 10
+    acceptPerMin: 20
+  # Public origin of the app (the BFF's CSRF allowlist + Stripe return URLs).
+  appBaseURL: "http://localhost:8088"
+  resendFrom: "StatusFlow <noreply@statusflow.example>"
+
+# --- Sensitive app config (rendered into a Secret unless existingSecret) ----
+# Leave billing/email empty to run inert (Free-only, dev outbox). When set, the
+# Go config fails fast on a half-configured Stripe/Resend (see config.go).
+secrets:
+  create: true
+  existingSecret: ""
+  resendApiKey: ""
+  stripeSecretKey: ""
+  stripeWebhookSecret: ""
+  stripePriceId: ""
+
+# --- Web (Next.js BFF) -----------------------------------------------------
+web:
+  enabled: true
+  replicas: 1
+  # As seen from the Next server: the in-cluster api Service. Browser never sees it.
+  internalApiUrl: ""   # default: http://<fullname>-api:<api port>
+  appOrigin: "http://localhost:8088"
+  port: 3000
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 75
+  pdb:
+    enabled: false
+    minAvailable: 1
+
+# --- API (Go) --------------------------------------------------------------
+api:
+  replicas: 1
+  port: 8080
+  opsPort: 9090
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 75
+  pdb:
+    enabled: false
+    minAvailable: 1
+
+# --- Worker (Go) -----------------------------------------------------------
+# Stays at one replica: claim_due_monitors() makes N instances safe, but a
+# single worker is plenty for a portfolio and keeps reasoning simple. PDB still
+# guards it against involuntary disruption during node drains.
+worker:
+  replicas: 1
+  opsPort: 9090
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  pdb:
+    enabled: false
+    minAvailable: 0
+
+# --- Migration Job (privileged) --------------------------------------------
+migrate:
+  enabled: true
+  # Helm hook so migrations run before api/worker roll. backoffLimit retries a
+  # transient DB-not-ready; the readiness wait on Postgres usually makes this 0.
+  backoffLimit: 3
+  # The privileged DSN lives in its OWN Secret, mounted only on this Job. When
+  # create=true the chart renders it as an ephemeral pre-install/pre-upgrade hook
+  # that is deleted once the Job succeeds — so the superuser DSN does not even
+  # persist in the cluster between deploys (dev). In the cluster set create=false
+  # and point existingSecret at a pre-applied Sealed Secret carrying
+  # MIGRATIONS_DATABASE_URL (it exists independently, so the hook Job can read it).
+  secret:
+    create: true
+    existingSecret: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+# --- Ingress (Traefik on k3s/kind) -----------------------------------------
+ingress:
+  enabled: true
+  className: ""   # "traefik" on k3s; empty uses the cluster default
+  host: statusflow.localtest.me
+  annotations: {}
+  # The Stripe webhook is the ONE API path that must be publicly reachable: it's
+  # called server-to-server by Stripe (no session cookie, trusted only by HMAC
+  # signature), so it can't go through the BFF's Origin check. Routed straight to
+  # the api Service. Everything else the browser needs goes through web (the BFF).
+  exposeApiWebhook: true
+  webhookPath: /api/stripe/webhook
+  tls:
+    enabled: false
+    secretName: ""
+
+# --- NetworkPolicies -------------------------------------------------------
+networkPolicy:
+  enabled: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Pod security for the Go workloads (api, worker, migrate). The distroless
+# images run as the numeric uid 65532 ("nonroot"); runAsNonRoot needs the number
+# explicitly or the kubelet can't verify the (non-numeric) image user.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# Pod security for web (node:slim → uid 1000 "node"); fsGroup makes the writable
+# emptyDir cache/tmp owned by the group the process runs as.
+webPodSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

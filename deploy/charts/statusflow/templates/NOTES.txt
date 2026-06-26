@@ -1,0 +1,31 @@
+StatusFlow {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  api      {{ include "sf.api.fullname" . }}      (Go API, app_user DSN)
+  worker   {{ include "sf.worker.fullname" . }}   (Go worker, app_user DSN)
+{{- if .Values.web.enabled }}
+  web      {{ include "sf.web.fullname" . }}      (Next.js BFF — the only browser-facing origin)
+{{- end }}
+  migrate  ran as a pre-install/upgrade Job on the PRIVILEGED DSN (DDL never via app_user).
+
+{{- if .Values.ingress.enabled }}
+
+App URL: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/
+{{- if .Values.ingress.exposeApiWebhook }}
+Stripe webhook (server-to-server, signature-trusted): {{ .Values.ingress.webhookPath }} -> api
+{{- end }}
+{{- end }}
+
+Checks:
+  kubectl -n {{ .Release.Namespace }} get pods,svc,ingress -l app.kubernetes.io/part-of=statusflow
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "sf.fullname" . }}-migrate   # migration output
+
+{{- if not .Values.config.sessionCookieSecure }}
+
+WARNING: config.sessionCookieSecure is false. Set it true for any real (https) deployment.
+{{- end }}
+{{- if and .Values.db.secret.create (eq .Values.db.appUserPassword "devpassword") }}
+
+WARNING: using the built-in dev Postgres password. For the cluster, set
+db.secret.create=false and supply a Sealed Secret (P13).
+{{- end }}

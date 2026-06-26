@@ -1,0 +1,128 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+NetworkPolicies. Enforcement requires a NP-capable CNI: k3s ships one (kube-
+router) so these bite on the VPS; kind's default kindnet does NOT enforce them,
+so on kind they render/apply but are inert (validate by manifest review). The
+headline is the WORKER egress policy: it must reach arbitrary monitor URLs on
+the internet, but is denied the RFC-1918 / link-local / CGNAT / metadata ranges
+— defence-in-depth behind the in-process SSRF dial guard.
+*/}}
+# --- DNS egress (shared) : every pod needs kube-dns -------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.fullname" . }}-allow-dns
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: statusflow
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# --- web : ingress from the cluster (ingress controller); egress to api -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.web.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sf.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: http
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "sf.selectorLabels" (dict "root" . "component" "api") | nindent 14 }}
+      ports:
+        - port: {{ .Values.api.port }}
+---
+# --- api : ingress from web + ingress controller (webhook); egress DB + 443 -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.api.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sf.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # http from any in-cluster source (web BFF + the ingress controller's webhook
+    # route). ops from the cluster (Prometheus scrape).
+    - ports:
+        - port: http
+        - port: ops
+  egress:
+    # Postgres.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: statusflow-postgres
+      ports:
+        - port: 5432
+    # HTTPS to the internet (Stripe Checkout/Portal API).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+      ports:
+        - port: 443
+---
+# --- worker : egress to DB + the SSRF-safe internet (the security story) -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.worker.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sf.selectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # ops only (Prometheus scrape); the worker serves no app traffic.
+    - ports:
+        - port: ops
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: statusflow-postgres
+      ports:
+        - port: 5432
+    # Monitor checks + Resend API. Public internet ONLY: the RFC-1918, link-local
+    # (incl. 169.254.169.254 metadata) and CGNAT ranges are carved out, so even a
+    # DNS-rebinding monitor URL that slips a private IP can't be reached at L3.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+{{- end }}

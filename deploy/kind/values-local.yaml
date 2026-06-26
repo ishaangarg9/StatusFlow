@@ -1,0 +1,30 @@
+# StatusFlow chart overrides for local kind. Billing/email stay inert (Free-only,
+# dev outbox), the cookie is non-Secure (kind is plain http), and the app origin
+# is the kind ingress at http://localhost:8088.
+images:
+  api:    {repository: statusflow-api,    tag: dev}
+  worker: {repository: statusflow-worker, tag: dev}
+  web:    {repository: statusflow-web,    tag: dev}
+  migrate: {repository: statusflow-migrate, tag: dev}
+  pullPolicy: IfNotPresent
+
+# Postgres was installed as the "pg" release, so its Service is "pg-postgres".
+db:
+  host: pg-postgres
+
+config:
+  sessionCookieSecure: false
+  appBaseURL: "http://localhost:8088"
+
+web:
+  appOrigin: "http://localhost:8088"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: localhost
+
+# NetworkPolicies render but kindnet does not enforce them; left enabled so the
+# manifests are exercised. See deploy/README.md.
+networkPolicy:
+  enabled: true

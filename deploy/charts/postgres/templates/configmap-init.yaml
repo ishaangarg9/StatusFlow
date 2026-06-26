@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pg.fullname" . }}-init
+  labels:
+    {{- include "pg.labels" . | nindent 4 }}
+data:
+  # Runs once, at first boot, as the superuser against the freshly-created
+  # POSTGRES_DB. It creates ONLY the restricted app_user; the superuser is the
+  # privileged migration role and the schema itself is built by the migration
+  # Job. Migration 001's `CREATE ROLE app_user … IF NOT EXISTS` then no-ops, so
+  # the real password set here wins over the migration's dev default.
+  10-app-user.sh: |
+    #!/bin/sh
+    set -e
+    psql -v ON_ERROR_STOP=1 \
+      --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+      --set=app_user="$APP_USER" \
+      --set=app_password="$APP_USER_PASSWORD" \
+      --set=app_db="$POSTGRES_DB" <<'EOSQL'
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') THEN
+        EXECUTE format(
+          'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT',
+          :'app_user', :'app_password');
+      END IF;
+    END $$;
+    GRANT CONNECT ON DATABASE :"app_db" TO :"app_user";
+    EOSQL

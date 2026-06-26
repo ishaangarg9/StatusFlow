@@ -1,0 +1,2 @@
+# Static assets served by Next at the site root. Kept so the standalone
+# Docker build (Dockerfile.web) always has a public/ dir to COPY.

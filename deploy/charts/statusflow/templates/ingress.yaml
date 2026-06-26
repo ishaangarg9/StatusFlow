@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sf.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- if .Values.ingress.exposeApiWebhook }}
+          # Most specific first: the Stripe webhook goes straight to the API.
+          - path: {{ .Values.ingress.webhookPath | quote }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "sf.api.fullname" . }}
+                port:
+                  number: {{ .Values.api.port }}
+          {{- end }}
+          # Everything else is the Next.js BFF (the only origin the browser sees).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sf.web.fullname" . }}
+                port:
+                  number: {{ .Values.web.port }}
+{{- end }}

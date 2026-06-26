@@ -233,7 +233,20 @@ upserts inside `WithOrgTx`, with an ordering/idempotency guard
 backwards. `billing:read` (owner/admin) / `billing:manage` (owner-only) added to
 the matrix. Stripe config is all-or-nothing and inert when unset. See
 `09-billing-and-go-live.md` (incl. the deferred flip-to-live checklist).
-Remaining: P11 (Helm/k8s) onward.
+**P11 (containerize + local cluster parity) ✅** — Helm charts under `deploy/`
+(`charts/postgres` shared StatefulSet; `charts/statusflow` for api/worker/web)
+plus `Dockerfile.web` (Next.js standalone) and `Dockerfile.migrate` (golang-migrate
++ baked migrations for the privileged Job). The §2 split is enforced in the cluster:
+the migration **Job** runs as a `pre-install,pre-upgrade` hook on the **privileged
+superuser DSN** (its own `statusflow-migrate` Secret, never mounted on a long-running
+pod); api + worker get **only** the `app_user` DSN. The **worker NetworkPolicy** fences
+egress to the public internet only — RFC-1918/link-local(metadata)/CGNAT denied, defence
+-in-depth behind the SSRF dial guard. Only **web** (the BFF) is on the Ingress; the lone
+API exception is `/api/stripe/webhook` (server-to-server, HMAC-signed). Validated on
+**kind** end-to-end (`deploy/validate.sh` / `make kind.validate`): migrations apply
+(version 20, all 12 tenant tables FORCE RLS, `app_user` is non-super/non-bypassrls),
+all pods healthy, and signup round-trips ingress→web→api→Postgres. See `deploy/README.md`.
+Remaining: P12 (VPS + k3s) onward.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 

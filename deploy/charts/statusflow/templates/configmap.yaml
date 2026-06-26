@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sf.fullname" . }}-config
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+data:
+  # Shared, non-secret env for the Go api + worker. Sensitive values (DSNs,
+  # Stripe/Resend keys) come from Secrets, not here.
+  API_ADDR: {{ .Values.config.apiAddr | quote }}
+  OPS_ADDR: {{ .Values.config.opsAddr | quote }}
+  SESSION_TTL_DAYS: {{ .Values.config.sessionTTLDays | quote }}
+  SESSION_COOKIE_NAME: {{ .Values.config.sessionCookieName | quote }}
+  SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
+  WORKER_TICK_MS: {{ .Values.config.worker.tickMs | quote }}
+  WORKER_BATCH: {{ .Values.config.worker.batch | quote }}
+  WORKER_CONCURRENCY: {{ .Values.config.worker.concurrency | quote }}
+  WORKER_CLAIM_LEASE_SECONDS: {{ .Values.config.worker.claimLeaseSeconds | quote }}
+  INCIDENT_OPEN_THRESHOLD: {{ .Values.config.incident.openThreshold | quote }}
+  INCIDENT_RESOLVE_THRESHOLD: {{ .Values.config.incident.resolveThreshold | quote }}
+  RATE_LIMIT_LOGIN_PER_MIN: {{ .Values.config.rateLimit.loginPerMin | quote }}
+  RATE_LIMIT_ACCEPT_PER_MIN: {{ .Values.config.rateLimit.acceptPerMin | quote }}
+  APP_BASE_URL: {{ .Values.config.appBaseURL | quote }}
+  RESEND_FROM: {{ .Values.config.resendFrom | quote }}

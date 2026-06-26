@@ -1,0 +1,26 @@
+# Migration image for the Kubernetes pre-install/pre-upgrade Job.
+#
+# This image runs as the PRIVILEGED Postgres role (its own Secret/DSN), never as
+# app_user — DDL must not flow through the restricted role (CLAUDE.md §2.1). The
+# long-running api/worker images deliberately do NOT bundle the migrations or the
+# migrate tool; only this short-lived Job does.
+#
+#   docker build -f Dockerfile.migrate -t statusflow-migrate:dev .
+#   # in-cluster the Job runs: migrate -path /migrations -database "$DSN" up
+#
+# Pinned to the same golang-migrate the Makefile/local dev use.
+
+ARG GO_VERSION=1.25
+ARG MIGRATE_VERSION=v4.18.1
+FROM golang:${GO_VERSION}-bookworm AS build
+ARG MIGRATE_VERSION
+# Build the migrate CLI with only the postgres + file drivers (no cgo, static).
+RUN CGO_ENABLED=0 GOBIN=/out go install -tags 'postgres,file' \
+    github.com/golang-migrate/migrate/v4/cmd/migrate@${MIGRATE_VERSION}
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/migrate /usr/local/bin/migrate
+# The migration set is baked in so the Job needs nothing mounted.
+COPY internal/db/migrations /migrations
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/migrate"]
