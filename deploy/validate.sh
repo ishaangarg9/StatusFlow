@@ -42,11 +42,20 @@ kubectl -n "$NS" rollout status deploy/statusflow-worker --timeout=120s
 echo "==> Smoke test (ingress -> web BFF -> api -> Postgres)"
 code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/login)
 echo "GET /login -> HTTP $code"; [ "$code" = "200" ] || { echo "FAIL: /login"; exit 1; }
-email="smoke-$(date +%s)@example.com"
-out=$(curl -s -w '\n%{http_code}' -X POST http://localhost:8088/bff/auth/signup \
-  -H "Content-Type: application/json" -H "Origin: http://localhost:8088" \
-  -d "{\"email\":\"$email\",\"password\":\"correcthorsebatterystaple\",\"name\":\"Smoke\"}")
-echo "POST /bff/auth/signup -> $(echo "$out" | tail -1)"
-echo "$out" | tail -1 | grep -qx "201" || { echo "FAIL: signup"; exit 1; }
+# Retry signup a few times: on an upgrade that rolled the api pod, the long-lived
+# web (BFF) pod can hold a keep-alive connection to the terminated api and 500 the
+# first request before re-dialing. A racy single-shot probe should not fail the run.
+signup_ok=""
+for attempt in 1 2 3 4 5; do
+  email="smoke-$(date +%s)-$attempt@example.com"
+  out=$(curl -s -w '\n%{http_code}' -X POST http://localhost:8088/bff/auth/signup \
+    -H "Content-Type: application/json" -H "Origin: http://localhost:8088" \
+    -d "{\"email\":\"$email\",\"password\":\"correcthorsebatterystaple\",\"name\":\"Smoke\"}")
+  status=$(echo "$out" | tail -1)
+  echo "POST /bff/auth/signup (attempt $attempt) -> $status"
+  if [ "$status" = "201" ]; then signup_ok=1; break; fi
+  sleep 2
+done
+[ -n "$signup_ok" ] || { echo "FAIL: signup"; exit 1; }
 
 echo "==> OK. App at http://localhost:8088"
