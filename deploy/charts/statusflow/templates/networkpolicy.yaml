@@ -125,4 +125,33 @@ spec:
               - 192.168.0.0/16
               - 169.254.0.0/16
               - 100.64.0.0/10
+{{- if .Values.migrate.enabled }}
+---
+# --- migrate : egress to DB only --------------------------------------------
+# The migration hook Job carries app.kubernetes.io/part-of=statusflow, so the
+# shared allow-dns policy above selects it for Egress — which flips it to
+# default-deny-egress. Without this policy the Job (its wait-for-postgres init
+# container AND `migrate up`) cannot reach Postgres:5432 on an NP-enforcing CNI
+# (k3s), and the pre-install/pre-upgrade hook hangs until backoffLimit. kindnet
+# doesn't enforce NP so this gap is invisible there — it bites on the VPS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.fullname" . }}-migrate
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: migrate
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: statusflow-postgres
+      ports:
+        - port: 5432
+{{- end }}
 {{- end }}

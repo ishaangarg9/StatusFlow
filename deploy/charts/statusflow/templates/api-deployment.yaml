@@ -16,8 +16,11 @@ spec:
         {{- include "sf.labels" . | nindent 8 }}
         app.kubernetes.io/component: api
       annotations:
-        # Roll the pods when config/secret content changes.
+        # Roll the pods when config/secret content changes (DSN or Stripe/Resend
+        # key rotation must take effect on `helm upgrade`).
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        checksum/secret-app: {{ include (print $.Template.BasePath "/secret-app.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "sf.serviceAccountName" . }}
       securityContext:
