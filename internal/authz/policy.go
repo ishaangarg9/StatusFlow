@@ -35,6 +35,13 @@ const (
 	ActionStatusPublish Action = "statuspage:publish"
 
 	ActionAuditRead Action = "audit:read"
+
+	// Billing. Reading the plan/usage is owner+admin; managing money (starting
+	// checkout, opening the customer portal) is owner-only — the org owner is the
+	// paying party. Entitlement caps themselves are NOT gated here: they apply to
+	// any role's writes based on the org's plan (see internal/entitlements).
+	ActionBillingRead   Action = "billing:read"
+	ActionBillingManage Action = "billing:manage"
 )
 
 // AllRoles is the canonical list of roles, for exhaustive iteration (tests,
@@ -74,6 +81,7 @@ func AllActions() []Action {
 		ActionIncidentRead, ActionIncidentCreate, ActionIncidentUpdate, ActionIncidentResolve,
 		ActionStatusRead, ActionStatusPublish,
 		ActionAuditRead,
+		ActionBillingRead, ActionBillingManage,
 	}
 }
 
@@ -94,6 +102,7 @@ var rolePermissions = map[Role]map[Action]bool{
 		ActionMonitorRead, ActionMonitorCreate, ActionMonitorUpdate, ActionMonitorDelete,
 		ActionIncidentRead, ActionIncidentCreate, ActionIncidentUpdate, ActionIncidentResolve,
 		ActionStatusRead, ActionStatusPublish, ActionAuditRead,
+		ActionBillingRead, ActionBillingManage,
 	),
 	RoleAdmin: set(
 		ActionOrgRead, ActionOrgUpdate,
@@ -101,6 +110,7 @@ var rolePermissions = map[Role]map[Action]bool{
 		ActionMonitorRead, ActionMonitorCreate, ActionMonitorUpdate, ActionMonitorDelete,
 		ActionIncidentRead, ActionIncidentCreate, ActionIncidentUpdate, ActionIncidentResolve,
 		ActionStatusRead, ActionStatusPublish, ActionAuditRead,
+		ActionBillingRead,
 	),
 	RoleMember: set(
 		ActionOrgRead, ActionMemberRead,

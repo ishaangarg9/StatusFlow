@@ -151,6 +151,20 @@ export type PublicStatus = {
   }[];
 };
 
+// --- Billing --------------------------------------------------------------
+
+export type Plan = "free" | "pro";
+
+export type Subscription = {
+  plan: Plan;
+  status: string;
+  currentPeriodEnd?: string | null;
+  limits: { maxMonitors: number; maxStatusPages: number }; // -1 = unlimited
+  usage: { monitors: number; statusPages: number };
+  configured: boolean; // Stripe keys present → checkout works
+  hasCustomer: boolean; // a Stripe customer exists → portal available
+};
+
 // --- Audit ----------------------------------------------------------------
 
 export type AuditEntry = {

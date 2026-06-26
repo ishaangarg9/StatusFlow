@@ -41,6 +41,16 @@ func Conflict(msg string) *AppError {
 func RateLimited() *AppError {
 	return &AppError{http.StatusTooManyRequests, "rate_limited", "Too many requests."}
 }
+
+// PlanLimit is returned when an org has hit a server-enforced entitlement cap
+// (e.g. the Free plan's monitor limit). 402 Payment Required so the UI can show
+// an "upgrade" CTA distinct from a permission (403) or validation (422) error.
+func PlanLimit(msg string) *AppError {
+	if msg == "" {
+		msg = "Your plan's limit has been reached. Upgrade to add more."
+	}
+	return &AppError{http.StatusPaymentRequired, "plan_limit", msg}
+}
 func Internal(err error) *AppError {
 	return &AppError{http.StatusInternalServerError, "internal", "Something went wrong."}
 }

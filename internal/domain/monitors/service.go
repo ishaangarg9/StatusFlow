@@ -3,6 +3,7 @@ package monitors
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ishaangarg9/statusflow/internal/authz"
 	"github.com/ishaangarg9/statusflow/internal/domain/audit"
+	"github.com/ishaangarg9/statusflow/internal/entitlements"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 	"github.com/ishaangarg9/statusflow/internal/tenancy"
 )
@@ -229,6 +231,25 @@ func (s *Service) Create(ctx context.Context, ac authz.AuthContext, in CreateInp
 
 	var m MonitorView
 	err := tenancy.WithOrgTx(ctx, s.pool, ac.OrgID, func(tx pgx.Tx) error {
+		// Entitlement gate: the org's plan caps how many monitors it may have.
+		// Checked inside the tx (RLS armed) so the count and the insert see the
+		// same snapshot. This is independent of authz (a member can create, but
+		// not past the plan limit).
+		plan, err := entitlements.PlanForOrg(ctx, tx, ac.OrgID)
+		if err != nil {
+			return err
+		}
+		lim := entitlements.LimitsFor(plan)
+		var count int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM monitors WHERE org_id = $1`, ac.OrgID).Scan(&count); err != nil {
+			return err
+		}
+		if !entitlements.WithinLimit(count, lim.MaxMonitors) {
+			return shared.PlanLimit(fmt.Sprintf(
+				"Your plan allows up to %d monitors. Upgrade to add more.", lim.MaxMonitors))
+		}
+
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO monitors (org_id, name, url, method, expected_status, interval_seconds, timeout_ms)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)

@@ -36,6 +36,8 @@ var wantMatrix = map[authz.Action][]authz.Role{
 	authz.ActionStatusRead:      {authz.RoleOwner, authz.RoleAdmin, authz.RoleMember, authz.RoleViewer},
 	authz.ActionStatusPublish:   {authz.RoleOwner, authz.RoleAdmin},
 	authz.ActionAuditRead:       {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionBillingRead:     {authz.RoleOwner, authz.RoleAdmin},
+	authz.ActionBillingManage:   {authz.RoleOwner},
 }
 
 func TestPermissionMatrix(t *testing.T) {

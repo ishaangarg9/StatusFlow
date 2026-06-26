@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
+  CreditCard,
   FileText,
   Gauge,
   ScrollText,
@@ -21,6 +22,7 @@ export function OrgNav({ orgId }: { orgId: string }) {
   const pathname = usePathname();
   const base = `/orgs/${orgId}`;
   const canAudit = useCan("audit:read");
+  const canBilling = useCan("billing:read");
 
   const items = [
     { href: base, label: "Overview", icon: Gauge, exact: true },
@@ -30,6 +32,9 @@ export function OrgNav({ orgId }: { orgId: string }) {
     { href: `${base}/members`, label: "Members", icon: Users },
     ...(canAudit
       ? [{ href: `${base}/audit`, label: "Audit log", icon: ScrollText }]
+      : []),
+    ...(canBilling
+      ? [{ href: `${base}/billing`, label: "Billing", icon: CreditCard }]
       : []),
     { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];

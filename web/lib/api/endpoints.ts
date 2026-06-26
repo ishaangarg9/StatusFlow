@@ -21,6 +21,7 @@ import type {
   Role,
   Session,
   StatusPage,
+  Subscription,
 } from "../types";
 
 export type ApiFetch = <T>(
@@ -197,6 +198,21 @@ export function makeApi(f: ApiFetch) {
       const q = qs.toString();
       return f<AuditPage>("GET", `/orgs/${orgId}/audit${q ? `?${q}` : ""}`);
     },
+
+    // --- billing ---
+    getSubscription: (orgId: string) =>
+      f<{ subscription: Subscription }>(
+        "GET",
+        `/orgs/${orgId}/billing/subscription`,
+      ).then((r) => r.subscription),
+    startCheckout: (orgId: string) =>
+      f<{ url: string }>("POST", `/orgs/${orgId}/billing/checkout`, {}).then(
+        (r) => r.url,
+      ),
+    startPortal: (orgId: string) =>
+      f<{ url: string }>("POST", `/orgs/${orgId}/billing/portal`, {}).then(
+        (r) => r.url,
+      ),
 
     // --- public (no cookie; used by SSR public page only) ---
     publicStatus: (slug: string) =>

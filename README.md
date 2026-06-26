@@ -110,9 +110,16 @@ make worker          # go run ./cmd/worker   — pings monitors, drives incident
 
 ```bash
 cd web
+cp .env.example .env.local   # set INTERNAL_API_URL to the API (default http://localhost:8081)
 pnpm install
-pnpm dev             # Next.js dev server on :3000, talks to the API at NEXT_PUBLIC_API_BASE_URL
+pnpm dev                     # Next.js dev server on :3000
 ```
+
+The browser only ever talks to the Next origin: a **BFF** route handler
+(`web/app/bff/[...path]/route.ts`) forwards the first-party HttpOnly `sf_session`
+cookie to the Go API server-side, so the API origin (`INTERNAL_API_URL`) is a
+**server-only** variable, never `NEXT_PUBLIC_*` (ADR-11). Make sure
+`INTERNAL_API_URL` matches the port the API actually listens on (`API_ADDR`).
 
 Open http://localhost:3000. The public status page lives at `/status/<slug>` and is server-rendered without the session cookie.
 
@@ -166,4 +173,7 @@ All configuration is via environment variables (see `.env.example`):
 | `WORKER_CLAIM_LEASE_SECONDS` | re-check window for a crashed worker's in-flight monitor |
 | `INCIDENT_OPEN_THRESHOLD`, `INCIDENT_RESOLVE_THRESHOLD` | consecutive checks before opening / resolving an incident |
 | `RATE_LIMIT_LOGIN_PER_MIN`, `RATE_LIMIT_ACCEPT_PER_MIN` | per-IP rate limits on login and invite-accept |
-| `NEXT_PUBLIC_API_BASE_URL` | API origin the frontend calls |
+| `RESEND_API_KEY`, `RESEND_FROM`, `APP_BASE_URL` | invitation email delivery (worker); empty key = dev filesystem outbox |
+| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | billing (test mode); empty key = inert (every org Free). See `09-billing-and-go-live.md` |
+
+The frontend has its own env (`web/.env.example`): `INTERNAL_API_URL` (server-only API origin the BFF forwards to) and `APP_ORIGIN` (this app's public origin, used by the BFF CSRF check — required in production).
