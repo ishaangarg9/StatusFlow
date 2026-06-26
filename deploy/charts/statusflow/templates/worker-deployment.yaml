@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sf.worker.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sf.selectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sf.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        # Roll the pods when config/secret content changes (DSN or Stripe/Resend
+        # key rotation must take effect on `helm upgrade`).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        checksum/secret-app: {{ include (print $.Template.BasePath "/secret-app.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "sf.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "sf.image" (dict "root" . "img" .Values.images.worker) | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: ops
+              containerPort: {{ .Values.worker.opsPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "sf.fullname" . }}-config
+            - secretRef:
+                name: {{ include "sf.appSecretName" . }}
+          env:
+            # app_user DSN only — the worker never runs DDL.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sf.dbSecretName" . }}
+                  key: DATABASE_URL
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: ops
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: ops
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}

@@ -1,0 +1,54 @@
+# Shared Postgres for StatusFlow (and, later, sibling projects).
+#
+# Security model (mirrors local docker-compose so kind == VPS == dev):
+#   - The SUPERUSER (auth.superuser) is the *privileged migration role*. It owns
+#     the schema objects, so the SECURITY DEFINER escape-hatch functions it
+#     creates can bypass RLS — exactly as `postgres` does in dev. Its DSN is
+#     mounted ONLY on the short-lived migration Job, never on api/worker.
+#   - app_user (auth.appUser) is NOSUPERUSER / NOBYPASSRLS / DML-only. The
+#     long-running api + worker connect as this role and nothing else.
+# These two roles are the whole point of the tenancy story; do not collapse them.
+
+image:
+  repository: postgres
+  tag: "16"
+  pullPolicy: IfNotPresent
+
+# Database + roles created at first boot. dbName is created by the postgres
+# entrypoint (POSTGRES_DB); appUser is created by the init script so migration
+# 001's `CREATE ROLE … IF NOT EXISTS` is a no-op and the real password wins.
+db:
+  name: statusflow
+  appUser: app_user
+
+auth:
+  # When create=true the chart renders a Secret from the passwords below — DEV /
+  # local-kind ONLY. In the cluster (P13) these come from a Sealed Secret and you
+  # set create=false + existingSecret. Never commit real passwords here.
+  create: true
+  existingSecret: ""
+  superuser: postgres
+  superuserPassword: postgres
+  appUserPassword: devpassword
+
+service:
+  port: 5432
+
+persistence:
+  enabled: true
+  size: 5Gi
+  # Empty => the cluster default StorageClass (kind ships "standard").
+  storageClass: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Postgres must run as its own uid; the official image manages this via fsGroup.
+podSecurityContext:
+  fsGroup: 999
+  runAsUser: 999
+  runAsGroup: 999

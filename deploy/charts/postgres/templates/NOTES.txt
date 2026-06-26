@@ -1,0 +1,12 @@
+Postgres "{{ include "pg.fullname" . }}" is starting.
+
+In-cluster DSNs (host = {{ include "pg.fullname" . }}, db = {{ .Values.db.name }}):
+
+  app_user (api/worker — RLS-restricted):
+    postgres://{{ .Values.db.appUser }}:<app-user-password>@{{ include "pg.fullname" . }}:{{ .Values.service.port }}/{{ .Values.db.name }}?sslmode=disable
+
+  superuser (migration Job ONLY — privileged):
+    postgres://{{ .Values.auth.superuser }}:<superuser-password>@{{ include "pg.fullname" . }}:{{ .Values.service.port }}/{{ .Values.db.name }}?sslmode=disable
+
+The statusflow chart builds both DSNs for you from its own auth values; point it
+at this service via postgres.host.

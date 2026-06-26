@@ -1,0 +1,11 @@
+apiVersion: v2
+name: statusflow
+description: >-
+  StatusFlow — multi-tenant uptime/status-page SaaS. Go api + worker behind a
+  Next.js BFF, with a privileged migration Job (run on the superuser DSN) and the
+  app connecting ONLY as the restricted app_user. RLS is the isolation backstop;
+  this chart never widens app_user or puts the privileged DSN on a long-running
+  pod.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

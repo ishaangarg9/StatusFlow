@@ -2,6 +2,8 @@
   "name": "statusflow-web",
   "version": "0.1.0",
   "private": true,
+  "//packageManager": "Pin pnpm so corepack uses the same version everywhere (the lockfile is v9). Without this, the Docker build's corepack pulls pnpm 10, which errors on the lockfile's ignored build scripts.",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

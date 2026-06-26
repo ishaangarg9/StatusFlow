@@ -1,0 +1,67 @@
+{{- if .Values.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sf.web.fullname" . }}
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sf.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sf.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: {{ include "sf.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.webPodSecurityContext | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "sf.image" (dict "root" . "img" .Values.images.web) | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          env:
+            # ADR-11: the API origin is SERVER-ONLY. The BFF forwards to the
+            # in-cluster api Service; the browser never sees it.
+            - name: INTERNAL_API_URL
+              value: {{ include "sf.internalApiUrl" . | quote }}
+            - name: APP_ORIGIN
+              value: {{ .Values.web.appOrigin | quote }}
+            - name: PORT
+              value: {{ .Values.web.port | quote }}
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          # readOnlyRootFilesystem is on, but the Next standalone server writes
+          # its ISR/fetch cache and temp files — give it writable emptyDirs.
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

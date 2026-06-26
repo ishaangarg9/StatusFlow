@@ -1,0 +1,10 @@
+apiVersion: v2
+name: statusflow-postgres
+description: >-
+  Shared single-node Postgres for the cluster (StatefulSet + PVC). One database
+  plus an app_user/superuser pair per project; RLS is load-bearing so the app
+  connects ONLY as the restricted role. Self-hosted, not HA — a portfolio
+  database, not a managed cluster.
+type: application
+version: 0.1.0
+appVersion: "16"

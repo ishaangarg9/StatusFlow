@@ -1,0 +1,16 @@
+# Build context for Dockerfile.web is this directory. Keep it lean and free of
+# anything secret or rebuildable.
+node_modules
+.next
+.git
+.gitignore
+
+# Local env / secrets — never bake these into a layer.
+.env
+.env.*
+!.env.example
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/

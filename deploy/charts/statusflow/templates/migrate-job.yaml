@@ -1,0 +1,68 @@
+{{- if .Values.migrate.enabled }}
+# Privileged migration Job. Runs as a Helm pre-install/pre-upgrade hook so the
+# schema is current before api/worker roll. It is the ONLY workload that mounts
+# MIGRATIONS_DATABASE_URL (the superuser DSN); DDL never flows through app_user.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sf.fullname" . }}-migrate
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "sf.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # No custom ServiceAccount: this Job never talks to the k8s API, and the
+      # chart's SA is a normal resource that doesn't exist yet at pre-install
+      # hook time. The namespace default SA is sufficient.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Postgres may still be coming up on a fresh install; block until it answers
+      # before running DDL so the Job doesn't burn its backoffLimit on connRefused.
+      initContainers:
+        - name: wait-for-postgres
+          # Reuse the postgres image for its pg_isready client (a TCP probe; it
+          # writes nothing, so it runs fine as the pod's nonroot uid 65532).
+          image: "postgres:16"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Values.db.host }} -p {{ .Values.db.port }} -U {{ .Values.db.superuser }}; do
+                echo "waiting for postgres at {{ .Values.db.host }}:{{ .Values.db.port }}"; sleep 2;
+              done
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+      containers:
+        - name: migrate
+          image: {{ include "sf.image" (dict "root" . "img" .Values.images.migrate) | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args:
+            - "-path"
+            - "/migrations"
+            - "-database"
+            - "$(MIGRATIONS_DATABASE_URL)"
+            - "up"
+          env:
+            - name: MIGRATIONS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sf.migrateSecretName" . }}
+                  key: MIGRATIONS_DATABASE_URL
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+{{- end }}
