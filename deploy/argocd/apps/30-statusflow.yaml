@@ -1,0 +1,45 @@
+# Wave 1: the StatusFlow app (api + worker + web + migration Job + ingress +
+# NetworkPolicies + HPA/PDB). Syncs after Postgres and the secrets exist.
+#
+# Invariant preserved under GitOps: the migration Job is a Helm
+# pre-install/pre-upgrade hook, which Argo CD maps to a **PreSync** hook — it runs
+# (on the privileged `statusflow-migrate` DSN) and must succeed BEFORE api/worker/
+# web roll. The long-running Deployments still get only the `app_user` DSN. The
+# §2 privileged/restricted split holds identically whether Helm or Argo drives it.
+#
+# Replace <you>. Edit `<domain>` once in deploy/prod/values-statusflow.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: statusflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  source:
+    repoURL: https://github.com/<you>/SaaS.git
+    targetRevision: main
+    path: deploy/charts/statusflow
+    helm:
+      valueFiles:
+        - ../../prod/values-statusflow.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: statusflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      # The PreSync migration Job can fail transiently (Postgres still electing,
+      # secret not yet unsealed on a cold bootstrap). Back off and converge.
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

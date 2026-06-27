@@ -1,0 +1,29 @@
+# argocd.<domain> -> argocd-server. Plain http (server.insecure=true); edge TLS
+# is at Cloudflare. The host is already pre-wired in the cloudflared tunnel
+# ConfigMap. GATE THIS BEHIND CLOUDFLARE ACCESS (email allow-list) before use —
+# the Argo CD API/UI is a cluster-admin-grade surface; do not expose it open.
+#
+# Replace <domain>.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+  annotations:
+    # gRPC + web share the host; Traefik routes both over the plain http port.
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: argocd.<domain>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80

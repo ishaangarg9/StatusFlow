@@ -263,8 +263,28 @@ is gitignored, the §2 split holds (`statusflow-db`=app_user DSN, `statusflow-mi
 `existingSecret` (nothing sensitive inline), `sessionCookieSecure=true`, https
 origins, `ingress.className=traefik` + `tls.enabled=false`, HPA/PDB on. All
 render-verified with `helm template` (0 inline Secrets). Not run here (no box):
-the runbook is executed against your own Hetzner/Cloudflare. Remaining: P13
-(GitOps/Argo CD) onward.
+the runbook is executed against your own Hetzner/Cloudflare.
+**P13 (GitOps with Argo CD) ✅** — Git is the source of truth; artifacts +
+runbook in `deploy/argocd/README.md`. One imperative bootstrap (`install.sh`:
+pinned Argo CD release + `server.insecure` so Traefik fronts it behind edge TLS
++ the `argocd.<domain>` Ingress for Cloudflare Access), then the **app-of-apps**
+(`root-app.yaml`) reconciles four child Applications ordered by **sync-wave**:
+`secrets` (-1, the SealedSecret payloads) → `postgres` (0) → `statusflow` + `cloudflared`
+(1), all with `automated` prune + selfHeal. The §2 split survives GitOps
+**unchanged**: the migration Job's `pre-install,pre-upgrade` Helm hook maps to an
+Argo **PreSync** hook (privileged `statusflow-migrate` DSN, must succeed before
+api/worker/web roll); api/worker still mount only `app_user`. A scoped
+**AppProject** (`project.yaml`) restricts every Application to this repo + the
+`statusflow`/`cloudflared`/`argocd` namespaces. The sealed-secrets **controller**
+stays a day-0 bootstrap (it's the decryption trust anchor — Argo manages the
+sealed *payloads*, not the key holder); namespaces are bootstrap too
+(`CreateNamespace=false`). The Argo apps reference the existing
+`deploy/prod/values-{postgres,statusflow}.yaml` via `helm.valueFiles` (no
+duplication) and `deploy/cloudflared/` + `deploy/sealed-secrets/sealed/` as
+directory sources. README documents the change→PR→merge→auto-sync→rollback demo.
+All manifests YAML-linted + the referenced charts `helm template`-verified (0
+inline Secrets); not run here (no box/pushed repo). Remaining: P14 (observability)
+onward.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 

@@ -1,0 +1,36 @@
+# Wave 0: in-cluster Postgres (StatefulSet + PVC). Comes up after the secrets
+# (statusflow-pg-auth) so it can read the role passwords, and before StatusFlow
+# so the migration Job has a database to hit.
+#
+# Replace <you>.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  source:
+    repoURL: https://github.com/<you>/SaaS.git
+    targetRevision: main
+    path: deploy/charts/postgres
+    helm:
+      # The prod overrides live outside the chart dir but inside the repo, which
+      # Argo allows. Same file the P12 runbook passes to `helm install`.
+      valueFiles:
+        - ../../prod/values-postgres.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: statusflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      # The PVC is immutable once bound; don't let a re-sync try to mutate it.
+      - ApplyOutOfSyncOnly=true
