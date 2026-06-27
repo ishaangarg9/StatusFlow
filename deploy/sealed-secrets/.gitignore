@@ -1,0 +1,4 @@
+# Plaintext secret inputs — NEVER commit. seal.sh consumes these.
+secrets.env
+# Backup of the controller's private key — keep it OUT of Git (store offline).
+sealed-secrets-key.backup.yaml

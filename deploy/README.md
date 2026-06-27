@@ -16,6 +16,11 @@ deploy/
     kind-cluster.yaml   # 1-node kind cluster, host :8088 -> ingress :80
     values-local.yaml   # chart overrides for local kind (inert billing, http cookie)
   validate.sh           # build + kind + install + smoke test, one shot
+  # --- P12 (VPS + k3s) ---
+  vps/             # host bring-up: cloud-init/harden, install-k3s, postgres volume + RUNBOOK
+  cloudflared/     # in-cluster Cloudflare Tunnel (no open inbound ports)
+  sealed-secrets/  # encrypted secrets in Git (controller + seal.sh)
+  prod/            # production chart overrides (existingSecret, secure cookie, Traefik)
 ```
 
 Container images (built from the repo root unless noted):
@@ -98,6 +103,14 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8088/login            
 Tear down: `kind delete cluster --name statusflow`.
 
 ## Production notes (P12–P13)
+
+> **P12 is built out** — the full VPS + k3s bring-up runbook lives in
+> [`vps/README.md`](vps/README.md): provision/harden the Hetzner box, install
+> single-node k3s (Traefik kept), put Postgres on a durable Hetzner Volume, seal
+> all secrets into Git ([`sealed-secrets/`](sealed-secrets/README.md)), deploy
+> with [`prod/`](prod/) overrides, and expose it via a Cloudflare Tunnel
+> ([`cloudflared/`](cloudflared/README.md)) with **no open inbound ports**. The
+> bullets below are the rationale those artifacts implement.
 
 - **kind is plain http**, so `values-local.yaml` sets `sessionCookieSecure=false`
   and a `localhost` origin. A real deployment MUST set `config.sessionCookieSecure=true`

@@ -1,0 +1,104 @@
+#cloud-config
+# StatusFlow P12 — Hetzner first-boot hardening (paste as "user data" when you
+# create the server, OS image: Ubuntu 24.04).
+#
+# What this does on first boot, BEFORE k3s is installed:
+#   - creates a non-root sudo user `deploy` with your SSH key (root login off),
+#   - disables SSH password auth + root login,
+#   - installs/enables unattended-upgrades + fail2ban,
+#   - turns on ufw (default-deny inbound; only SSH allowed — there are NO public
+#     web ports because ingress arrives via the Cloudflare Tunnel, outbound only),
+#   - adds a swapfile (OOM safety net on a small box),
+#   - applies a little sysctl/kernel hardening.
+#
+# It deliberately does NOT install k3s — run deploy/vps/install-k3s.sh after you
+# can SSH in, so the cluster bring-up is an explicit, re-runnable step.
+#
+# >>> Replace SSH_PUBLIC_KEY_HERE with your real public key before pasting. <<<
+
+users:
+  - name: deploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - SSH_PUBLIC_KEY_HERE
+
+package_update: true
+package_upgrade: true
+packages:
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - apt-listchanges
+
+write_files:
+  # Keep SSH key-only and root-less. Drop-in overrides the distro default.
+  - path: /etc/ssh/sshd_config.d/99-statusflow-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+      AllowUsers deploy
+
+  # Apply security updates automatically; reboot at 04:30 if a package needs it.
+  - path: /etc/apt/apt.conf.d/51statusflow-unattended
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  # fail2ban: ban repeated SSH auth failures (defence-in-depth behind key-only auth).
+  - path: /etc/fail2ban/jail.d/statusflow.conf
+    content: |
+      [sshd]
+      enabled = true
+      mode = aggressive
+      maxretry = 4
+      findtime = 10m
+      bantime = 1h
+
+  # Load br_netfilter so the bridge sysctl below has a /proc path to write to on
+  # first boot (otherwise `sysctl --system` logs a failure for that key).
+  - path: /etc/modules-load.d/br_netfilter.conf
+    content: |
+      br_netfilter
+
+  # Conservative kernel/network hardening.
+  - path: /etc/sysctl.d/99-statusflow.conf
+    content: |
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+      net.ipv4.tcp_syncookies = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      kernel.kptr_restrict = 1
+      # k3s/CNI need these; set explicitly so a stricter base image can't drop them.
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+
+runcmd:
+  # ufw: deny inbound by default; allow only SSH. No 80/443 — Cloudflare Tunnel
+  # reaches the cluster outbound-only, so the box exposes no web ports at all.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - systemctl enable --now fail2ban
+  - systemctl enable --now unattended-upgrades
+  - modprobe br_netfilter || true
+  - sysctl --system || true
+  # 2G swap as an OOM cushion (k3s + Postgres + observability can spike).
+  - test -f /swapfile || fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - systemctl restart ssh
+
+final_message: "StatusFlow base hardening complete. SSH in as deploy@, then run deploy/vps/install-k3s.sh."

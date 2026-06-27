@@ -1,0 +1,74 @@
+# StatusFlow P12 — production overrides for the statusflow chart (k3s on the VPS).
+#   helm install statusflow ./deploy/charts/statusflow -n statusflow -f deploy/prod/values-statusflow.yaml
+#
+# Replace <domain> throughout. All secrets come from Sealed Secrets — this file
+# carries NOTHING sensitive.
+
+images:
+  # Where the images live. Either push to a registry (set registry + tags to an
+  # immutable SHA/version), or import tarballs into k3s with
+  #   sudo k3s ctr images import statusflow-<comp>.tar
+  # and reference them by the tag baked at build time. Don't ship :dev to prod.
+  registry: ""          # e.g. ghcr.io/<you>
+  pullPolicy: IfNotPresent
+  api: {repository: statusflow-api, tag: v0.12.0}
+  worker: {repository: statusflow-worker, tag: v0.12.0}
+  web: {repository: statusflow-web, tag: v0.12.0}
+  migrate: {repository: statusflow-migrate, tag: v0.12.0}
+
+# --- DB wiring: app_user DSN from a Sealed Secret (NOT assembled inline) -----
+db:
+  host: pg-postgres
+  secret:
+    create: false
+    existingSecret: statusflow-db        # key: DATABASE_URL (app_user DSN)
+
+# --- Non-secret app config ---------------------------------------------------
+config:
+  sessionCookieSecure: true              # invariant: true in any real deployment
+  appBaseURL: "https://statusflow.<domain>"
+  resendFrom: "StatusFlow <noreply@<domain>>"
+
+# --- Sensitive app config from a Sealed Secret -------------------------------
+secrets:
+  create: false
+  existingSecret: statusflow-app         # RESEND_API_KEY, STRIPE_* (empty => inert)
+
+# --- Web (Next.js BFF) -------------------------------------------------------
+web:
+  replicas: 2
+  appOrigin: "https://statusflow.<domain>"   # BFF CSRF origin allow-list
+  hpa: {enabled: true, minReplicas: 2, maxReplicas: 4}
+  pdb: {enabled: true, minAvailable: 1}
+
+# --- API ---------------------------------------------------------------------
+api:
+  replicas: 2
+  hpa: {enabled: true, minReplicas: 2, maxReplicas: 4}
+  pdb: {enabled: true, minAvailable: 1}
+
+# --- Worker (stays single; claim_due_monitors makes N safe but 1 is plenty) --
+worker:
+  replicas: 1
+  pdb: {enabled: true, minAvailable: 0}
+
+# --- Migration Job: privileged DSN from a Sealed Secret ----------------------
+migrate:
+  secret:
+    create: false
+    existingSecret: statusflow-migrate   # key: MIGRATIONS_DATABASE_URL (superuser DSN)
+
+# --- Ingress: Traefik on k3s. TLS terminates at Cloudflare's edge, so the
+#     in-cluster Ingress is plain http (cloudflared -> Traefik -> web). --------
+ingress:
+  enabled: true
+  className: traefik
+  host: statusflow.<domain>
+  tls:
+    enabled: false
+  # Stripe webhook stays the one public API path (server-to-server, HMAC-signed).
+  exposeApiWebhook: true
+
+# Worker-egress + default-deny NetworkPolicies on (k3s's CNI enforces them).
+networkPolicy:
+  enabled: true
