@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+data:
+  # Locally-managed tunnel: routing lives HERE in Git (not the Cloudflare
+  # dashboard), so the edge config is reviewable + GitOps-able in P13.
+  #
+  # The tunnel ID is not a secret — only the credentials.json is (sealed). Fill
+  # <TUNNEL_ID> (from `cloudflared tunnel create statusflow`) and <domain>.
+  #
+  # Every hostname is sent to k3s's Traefik ClusterIP; Traefik then host-routes
+  # via the Ingress resources. cloudflared preserves the original Host header, so
+  # `statusflow.<domain>` matches the statusflow Ingress. grafana/argocd hosts are
+  # pre-wired for P13/P14 — they 502 until those Ingresses exist, which is fine.
+  config.yaml: |
+    tunnel: <TUNNEL_ID>
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    # Graceful drain so rolling updates don't drop in-flight requests.
+    grace-period: 30s
+    ingress:
+      - hostname: statusflow.<domain>
+        service: http://traefik.kube-system.svc.cluster.local:80
+      - hostname: grafana.<domain>
+        service: http://traefik.kube-system.svc.cluster.local:80
+      - hostname: argocd.<domain>
+        service: http://traefik.kube-system.svc.cluster.local:80
+      # Catch-all: anything else gets a clean 404 (no default backend leak).
+      - service: http_status:404

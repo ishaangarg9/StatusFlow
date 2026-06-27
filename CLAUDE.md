@@ -246,7 +246,25 @@ API exception is `/api/stripe/webhook` (server-to-server, HMAC-signed). Validate
 **kind** end-to-end (`deploy/validate.sh` / `make kind.validate`): migrations apply
 (version 20, all 12 tenant tables FORCE RLS, `app_user` is non-super/non-bypassrls),
 all pods healthy, and signup round-trips ingress→web→api→Postgres. See `deploy/README.md`.
-Remaining: P12 (VPS + k3s) onward.
+**P12 (VPS + k3s bring-up) ✅** — the artifacts to take the P11 charts live on a
+single **Hetzner box + k3s**, runbook in `deploy/vps/README.md`. Host: `cloud-init.yaml`
+/ `harden.sh` (non-root sudoer, key-only SSH, ufw deny-inbound — **no 80/443**,
+unattended-upgrades, fail2ban, swap, sysctl), `install-k3s.sh` (single-node k3s,
+**Traefik kept**, `--secrets-encryption`), `setup-postgres-volume.sh` (mount a
+Hetzner Volume under k3s local-path so the DB survives a rebuild). Edge:
+`deploy/cloudflared/` runs an in-cluster **Cloudflare Tunnel** (outbound-only;
+the box exposes **zero inbound web ports**) → Traefik → web; TLS terminates at
+Cloudflare's edge so the Ingress is plain http; grafana/argocd hosts pre-wired
+for Cloudflare Access (P13/P14). Secrets: `deploy/sealed-secrets/` (Bitnami
+controller + `seal.sh`) keeps every secret **encrypted in Git** — `secrets.env`
+is gitignored, the §2 split holds (`statusflow-db`=app_user DSN, `statusflow-migrate`
+=privileged DSN, `statusflow-pg-auth`, `statusflow-app`, `cloudflared-credentials`).
+`deploy/prod/values-{statusflow,postgres}.yaml` flip every secret to
+`existingSecret` (nothing sensitive inline), `sessionCookieSecure=true`, https
+origins, `ingress.className=traefik` + `tls.enabled=false`, HPA/PDB on. All
+render-verified with `helm template` (0 inline Secrets). Not run here (no box):
+the runbook is executed against your own Hetzner/Cloudflare. Remaining: P13
+(GitOps/Argo CD) onward.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 

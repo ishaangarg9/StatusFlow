@@ -1,0 +1,22 @@
+# StatusFlow P12 — production overrides for the postgres chart (k3s on the VPS).
+#   helm install pg ./deploy/charts/postgres -n statusflow -f deploy/prod/values-postgres.yaml
+# Release name "pg" => Service "pg-postgres" (matches values-statusflow.yaml db.host).
+
+auth:
+  # Passwords come from the Sealed Secret (deploy/sealed-secrets), never inline.
+  create: false
+  existingSecret: statusflow-pg-auth   # keys: superuser-password, app-user-password
+
+persistence:
+  enabled: true
+  size: 20Gi
+  # k3s default StorageClass; setup-postgres-volume.sh backs it with the Hetzner
+  # Volume so the DB survives a box rebuild.
+  storageClass: local-path
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
