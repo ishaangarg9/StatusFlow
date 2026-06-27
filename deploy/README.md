@@ -21,6 +21,8 @@ deploy/
   cloudflared/     # in-cluster Cloudflare Tunnel (no open inbound ports)
   sealed-secrets/  # encrypted secrets in Git (controller + seal.sh)
   prod/            # production chart overrides (existingSecret, secure cookie, Traefik)
+  # --- P13 (GitOps) ---
+  argocd/          # Argo CD bootstrap + app-of-apps (Git is the source of truth) + RUNBOOK
 ```
 
 Container images (built from the repo root unless noted):
@@ -111,6 +113,12 @@ Tear down: `kind delete cluster --name statusflow`.
 > with [`prod/`](prod/) overrides, and expose it via a Cloudflare Tunnel
 > ([`cloudflared/`](cloudflared/README.md)) with **no open inbound ports**. The
 > bullets below are the rationale those artifacts implement.
+>
+> **P13 is built out** — Argo CD makes **Git the source of truth**
+> ([`argocd/README.md`](argocd/README.md)): one imperative bootstrap, then an
+> app-of-apps reconciles secrets → Postgres → StatusFlow (migration as a PreSync
+> hook) → cloudflared, with prune + self-heal + Git-revision rollback. The §2
+> privileged/restricted split and sealed-in-Git secrets carry over unchanged.
 
 - **kind is plain http**, so `values-local.yaml` sets `sessionCookieSecure=false`
   and a `localhost` origin. A real deployment MUST set `config.sessionCookieSecure=true`

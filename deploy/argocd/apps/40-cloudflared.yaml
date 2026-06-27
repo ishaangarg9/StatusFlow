@@ -1,0 +1,32 @@
+# Wave 1: the Cloudflare Tunnel (outbound-only edge). Plain manifests under
+# deploy/cloudflared/ — namespace, ConfigMap (tunnel routing in Git), Deployment.
+# The cloudflared-credentials Secret is delivered via the sealed-secrets app
+# (wave -1), so by the time this syncs the creds are present.
+#
+# Replace <you>. Fill <TUNNEL_ID>/<domain> in deploy/cloudflared/configmap.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflared
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  source:
+    repoURL: https://github.com/<you>/SaaS.git
+    targetRevision: main
+    path: deploy/cloudflared
+    directory:
+      include: "{namespace,configmap,deployment}.yaml"   # not the README
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudflared
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

@@ -1,0 +1,16 @@
+# Make argocd-server serve plain HTTP. Traefik fronts it in-cluster and TLS
+# terminates at Cloudflare's edge (cloudflared -> Traefik -> argocd-server),
+# exactly like the StatusFlow web ingress. Without this the server runs its own
+# TLS and Traefik double-encrypts / redirect-loops.
+#
+# The stock install.yaml ships this ConfigMap empty, so applying it here just
+# sets the one key we need.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"

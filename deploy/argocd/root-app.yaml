@@ -1,0 +1,33 @@
+# The app-of-apps root. This is the ONLY Application you apply by hand; it points
+# at deploy/argocd/apps/ and Argo CD then manages every child Application found
+# there (Postgres, StatusFlow, sealed-secret resources, cloudflared). Add a new
+# platform component by committing a new file under apps/ — no kubectl needed.
+#
+# Replace <you> and pin targetRevision to a branch/tag you trust (a tag or a SHA
+# is the more honest GitOps source of truth than a moving `main`).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  source:
+    repoURL: https://github.com/<you>/SaaS.git
+    targetRevision: main
+    path: deploy/argocd/apps
+    directory:
+      recurse: false
+      # Only the child Application manifests live directly under apps/.
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true       # a child Application removed from Git is removed from the cluster
+      selfHeal: true    # drift (manual kubectl edits) is reverted to Git
+    syncOptions:
+      - CreateNamespace=false   # namespaces are day-0 bootstrap (see README)

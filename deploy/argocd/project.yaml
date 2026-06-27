@@ -1,0 +1,34 @@
+# AppProject for the StatusFlow platform. Scoping the project (not running
+# everything in `default`) is the GitOps least-privilege story: Applications may
+# only pull from THIS repo and may only deploy into the namespaces we name.
+#
+# Replace <you> with your GitHub user/org. Keep this in lockstep with the repo
+# URL used by root-app.yaml and apps/*.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: statusflow
+  namespace: argocd
+  # Keep the project around even if the app-of-apps is deleted.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: StatusFlow SaaS + its platform addons (single-node k3s).
+  sourceRepos:
+    - https://github.com/<you>/SaaS.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: statusflow
+    - server: https://kubernetes.default.svc
+      namespace: cloudflared
+    - server: https://kubernetes.default.svc
+      namespace: argocd          # the root app-of-apps lives here
+  # The migration Job and Postgres init create namespaced resources only; no
+  # cluster-scoped resources are needed by the app charts. NetworkPolicies are
+  # namespaced. Allow the handful the charts actually use; deny the rest.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  # Roles/SSO can be added later; for a single-operator portfolio the default
+  # admin + Cloudflare Access in front of the UI is the access boundary.
