@@ -138,6 +138,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 	).Scan(&id, &em, &name, &hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Equalise cost with the known-email path (which runs a real
+			// argon2 verify below) so response time can't reveal whether the
+			// email exists. See auth.DummyVerify.
+			auth.DummyVerify(in.Password)
 			s.throttle.Fail(email)
 			return "", nil, shared.Unauthorized()
 		}

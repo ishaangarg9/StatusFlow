@@ -64,11 +64,37 @@ spec:
       {{- include "sf.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
   policyTypes: [Ingress, Egress]
   ingress:
-    # http from any in-cluster source (web BFF + the ingress controller's webhook
-    # route). ops from the cluster (Prometheus scrape).
+    # http: the web BFF + the ingress controller (the /api/stripe/webhook route).
+    # When networkPolicy.ingressControllerNamespace is set we pin `from` to those
+    # two sources; otherwise we admit http from any in-cluster pod (the previous,
+    # unhardened default) so the webhook keeps working before the knob is set.
+    {{- if .Values.networkPolicy.ingressControllerNamespace }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "sf.selectorLabels" (dict "root" . "component" "web") | nindent 14 }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+      ports:
+        - port: http
+    {{- else }}
     - ports:
         - port: http
+    {{- end }}
+    # ops: Prometheus scrape. Pinned to the monitoring namespace when configured
+    # (P14); otherwise admitted from any in-cluster pod.
+    {{- if .Values.networkPolicy.monitoringNamespace }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
         - port: ops
+    {{- else }}
+    - ports:
+        - port: ops
+    {{- end }}
   egress:
     # Postgres.
     - to:
@@ -103,9 +129,19 @@ spec:
       {{- include "sf.selectorLabels" (dict "root" . "component" "worker") | nindent 6 }}
   policyTypes: [Ingress, Egress]
   ingress:
-    # ops only (Prometheus scrape); the worker serves no app traffic.
+    # ops only (Prometheus scrape); the worker serves no app traffic. Pinned to
+    # the monitoring namespace when configured (P14), else any in-cluster pod.
+    {{- if .Values.networkPolicy.monitoringNamespace }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - port: ops
+    {{- else }}
     - ports:
         - port: ops
+    {{- end }}
   egress:
     - to:
         - podSelector:

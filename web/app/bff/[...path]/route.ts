@@ -21,6 +21,29 @@ const STRIP_SECURE = process.env.NODE_ENV !== "production";
 
 type Ctx = { params: Promise<{ path: string[] }> };
 
+// realClientIp resolves the caller's IP from headers our own edge/proxy set.
+// The browser cannot forge CF-Connecting-IP (Cloudflare overwrites it) nor the
+// values our trusted proxy appends. We deliberately do NOT return a client-
+// supplied leftmost XFF value.
+//
+// Order matters: CF-Connecting-IP (authoritative in the Cloudflare-tunnel
+// topology) first; then X-Real-Ip, which a single fronting proxy sets to the
+// real downstream client; and only then the rightmost X-Forwarded-For hop —
+// which in a multi-proxy chain is the *nearest proxy*, not the end user, so it's
+// the weakest signal and last resort.
+function realClientIp(req: NextRequest): string | undefined {
+  const cf = req.headers.get("cf-connecting-ip");
+  if (cf) return cf.trim();
+  const real = req.headers.get("x-real-ip");
+  if (real) return real.trim();
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) {
+    const hops = xff.split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return undefined;
+}
+
 async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (!passesOriginCheck(req)) {
     return NextResponse.json(
@@ -39,8 +62,14 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (accept) headers["accept"] = accept;
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (token) headers["cookie"] = `${SESSION_COOKIE}=${token}`;
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) headers["x-forwarded-for"] = xff;
+  // Forward a SINGLE, trustworthy client IP — never the browser-supplied
+  // X-Forwarded-For verbatim, which a client can spoof to poison the api's
+  // per-IP rate limiter. Prefer Cloudflare's authoritative CF-Connecting-IP
+  // (the edge overwrites it), else the rightmost XFF hop our own proxy chain
+  // appended (Traefik/Cloudflare), else X-Real-Ip. The api trusts this only
+  // because the BFF pod is in its TRUSTED_PROXIES set.
+  const clientIp = realClientIp(req);
+  if (clientIp) headers["x-forwarded-for"] = clientIp;
 
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const body = hasBody ? await req.text() : undefined;

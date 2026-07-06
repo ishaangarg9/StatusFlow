@@ -6,6 +6,7 @@ import { ExternalLink, Plus } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { qk } from "@/lib/query-keys";
 import { Can } from "@/components/can";
+import { ListError } from "@/components/list-error";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,7 +18,7 @@ import {
 } from "@/components/ui/card";
 
 export function StatusPagesList({ orgId }: { orgId: string }) {
-  const { data: pages, isLoading } = useQuery({
+  const { data: pages, isLoading, isError, refetch } = useQuery({
     queryKey: qk.statusPages(orgId),
     queryFn: () => api.listStatusPages(orgId),
   });
@@ -43,6 +44,8 @@ export function StatusPagesList({ orgId }: { orgId: string }) {
 
       {isLoading ? (
         <Skeleton className="h-32 w-full" />
+      ) : isError ? (
+        <ListError message="Couldn't load status pages." onRetry={refetch} />
       ) : pages && pages.length > 0 ? (
         <ul className="grid gap-3">
           {pages.map((p) => (

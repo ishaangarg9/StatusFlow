@@ -6,6 +6,7 @@ import { Plus } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { qk } from "@/lib/query-keys";
 import { Can } from "@/components/can";
+import { ListError } from "@/components/list-error";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/table";
 
 export function MonitorsList({ orgId }: { orgId: string }) {
-  const { data: monitors, isLoading } = useQuery({
+  const { data: monitors, isLoading, isError, refetch } = useQuery({
     queryKey: qk.monitors(orgId),
     queryFn: () => api.listMonitors(orgId),
     refetchInterval: 15000,
@@ -55,6 +56,8 @@ export function MonitorsList({ orgId }: { orgId: string }) {
         <CardContent className="pt-6">
           {isLoading ? (
             <Skeleton className="h-32 w-full" />
+          ) : isError ? (
+            <ListError message="Couldn't load monitors." onRetry={refetch} />
           ) : monitors && monitors.length > 0 ? (
             <Table>
               <TableHeader>

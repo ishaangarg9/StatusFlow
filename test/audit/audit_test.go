@@ -232,6 +232,16 @@ func TestPruneNotExecutableByAppUser(t *testing.T) {
 	}
 }
 
+// Same §2 boundary for check_results retention (migration 021): the app role
+// must not be able to invoke the cross-tenant prune.
+func TestPruneCheckResultsNotExecutableByAppUser(t *testing.T) {
+	ctx, f := setup(t)
+	_, err := f.pool.Exec(ctx, `SELECT prune_check_results(interval '90 days')`)
+	if err == nil {
+		t.Fatal("app_user must NOT be able to execute prune_check_results")
+	}
+}
+
 // On the privileged connection the prune deletes rows older than the retention
 // window and keeps newer ones; a non-positive interval is rejected. Skips
 // unless MIGRATIONS_DATABASE_URL is set (the privileged DSN).
@@ -281,6 +291,67 @@ func TestPruneByPrivilegedRole(t *testing.T) {
 	}
 
 	if _, err := priv.Exec(ctx, `SELECT prune_audit_logs(interval '0')`); err == nil {
+		t.Fatal("a non-positive retention interval must be rejected")
+	}
+}
+
+// prune_check_results (021) behaves like the audit prune: on the privileged
+// connection it drops rows older than the window, keeps fresh ones, and rejects
+// a non-positive interval. Skips unless MIGRATIONS_DATABASE_URL is set.
+func TestPruneCheckResultsByPrivilegedRole(t *testing.T) {
+	ctx, f := setup(t)
+	mdsn := os.Getenv("MIGRATIONS_DATABASE_URL")
+	if mdsn == "" {
+		t.Skip("MIGRATIONS_DATABASE_URL not set; skipping privileged check-results prune test")
+	}
+	priv, err := pgxpool.New(ctx, mdsn)
+	if err != nil {
+		t.Fatalf("connect privileged: %v", err)
+	}
+	defer priv.Close()
+
+	// A check_result needs a monitor (FK). Seed one for f.org on the privileged
+	// connection (bypasses RLS), then one stale + one fresh check row.
+	var monID uuid.UUID
+	if err := priv.QueryRow(ctx, `
+		INSERT INTO monitors (org_id, name, url, method, interval_seconds)
+		VALUES ($1, 'prune-mon', 'https://example.com', 'GET', 60) RETURNING id`,
+		f.org).Scan(&monID); err != nil {
+		t.Fatalf("seed monitor: %v", err)
+	}
+	var oldID, newID uuid.UUID
+	if err := priv.QueryRow(ctx, `
+		INSERT INTO check_results (org_id, monitor_id, status, checked_at)
+		VALUES ($1, $2, 'up', now() - interval '120 days') RETURNING id`,
+		f.org, monID).Scan(&oldID); err != nil {
+		t.Fatalf("seed old check: %v", err)
+	}
+	if err := priv.QueryRow(ctx, `
+		INSERT INTO check_results (org_id, monitor_id, status)
+		VALUES ($1, $2, 'up') RETURNING id`,
+		f.org, monID).Scan(&newID); err != nil {
+		t.Fatalf("seed fresh check: %v", err)
+	}
+
+	if _, err := priv.Exec(ctx, `SELECT prune_check_results(interval '90 days')`); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	exists := func(id uuid.UUID) bool {
+		var n int
+		if err := priv.QueryRow(ctx, `SELECT count(*) FROM check_results WHERE id = $1`, id).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n > 0
+	}
+	if exists(oldID) {
+		t.Fatal("120-day-old check_result should have been pruned")
+	}
+	if !exists(newID) {
+		t.Fatal("fresh check_result must survive a 90-day retention prune")
+	}
+
+	if _, err := priv.Exec(ctx, `SELECT prune_check_results(interval '0')`); err == nil {
 		t.Fatal("a non-positive retention interval must be rejected")
 	}
 }

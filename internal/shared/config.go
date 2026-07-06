@@ -2,6 +2,7 @@ package shared
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -39,6 +40,14 @@ type Config struct {
 
 	RateLimitLoginPerMin  int
 	RateLimitAcceptPerMin int
+
+	// TrustedProxies is the set of CIDRs/IPs whose X-Forwarded-For header we
+	// trust for deriving the real client IP (rate-limit keying). In the prod
+	// topology the api's peer is always the BFF pod, so without this the per-IP
+	// limiter collapses into a single global bucket. Leave empty (the default)
+	// to key strictly on the connection peer (RemoteAddr) — correct for direct
+	// exposure and local dev. Set to the pod/service CIDR in front of the api.
+	TrustedProxies []netip.Prefix
 
 	// Stripe (test mode in this phase). All optional: when StripeSecretKey is
 	// empty the app is "monetization-ready but inert" — every org is Free and the
@@ -109,6 +118,7 @@ func LoadConfig() (*Config, error) {
 		IncidentResolveThreshold: optInt("INCIDENT_RESOLVE_THRESHOLD", 2),
 		RateLimitLoginPerMin:     optInt("RATE_LIMIT_LOGIN_PER_MIN", 10),
 		RateLimitAcceptPerMin:    optInt("RATE_LIMIT_ACCEPT_PER_MIN", 20),
+		TrustedProxies:           parseTrustedProxies(opt("TRUSTED_PROXIES", ""), &errs),
 		StripeSecretKey:          strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
 		StripeWebhookSecret:      strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
 		StripePriceID:            strings.TrimSpace(os.Getenv("STRIPE_PRICE_ID")),
@@ -139,4 +149,37 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid config: %s", strings.Join(errs, ", "))
 	}
 	return c, nil
+}
+
+// parseTrustedProxies parses a comma-separated list of CIDRs or bare IPs into
+// prefixes. A bare IP becomes a /32 (or /128). Bad entries are appended to errs
+// so a typo fails fast at boot rather than silently disabling proxy handling.
+func parseTrustedProxies(raw string, errs *[]string) []netip.Prefix {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, tok := range strings.Split(raw, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if strings.Contains(tok, "/") {
+			p, err := netip.ParsePrefix(tok)
+			if err != nil {
+				*errs = append(*errs, "TRUSTED_PROXIES ("+tok+": "+err.Error()+")")
+				continue
+			}
+			out = append(out, p)
+			continue
+		}
+		addr, err := netip.ParseAddr(tok)
+		if err != nil {
+			*errs = append(*errs, "TRUSTED_PROXIES ("+tok+": "+err.Error()+")")
+			continue
+		}
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out
 }

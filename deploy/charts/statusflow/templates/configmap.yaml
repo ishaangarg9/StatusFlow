@@ -20,5 +20,8 @@ data:
   INCIDENT_RESOLVE_THRESHOLD: {{ .Values.config.incident.resolveThreshold | quote }}
   RATE_LIMIT_LOGIN_PER_MIN: {{ .Values.config.rateLimit.loginPerMin | quote }}
   RATE_LIMIT_ACCEPT_PER_MIN: {{ .Values.config.rateLimit.acceptPerMin | quote }}
+  {{- with .Values.config.trustedProxies }}
+  TRUSTED_PROXIES: {{ . | quote }}
+  {{- end }}
   APP_BASE_URL: {{ .Values.config.appBaseURL | quote }}
   RESEND_FROM: {{ .Values.config.resendFrom | quote }}
