@@ -1,0 +1,29 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+Ingress NetworkPolicy for Postgres. Selecting the DB pod for Ingress flips it to
+default-deny, so only pods matching allowedClientSelector (StatusFlow's api /
+worker / migrate, by their shared part-of label) can open 5432 — every other pod
+in the namespace is refused. Enforcement needs an NP-capable CNI: k3s (kube-
+router) bites; kind's kindnet does NOT, so this renders/applies but is inert
+there (validate by manifest review). Clients are assumed to share this namespace.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pg.fullname" . }}-allow-clients
+  labels:
+    {{- include "pg.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pg.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.allowedClientSelector | nindent 14 }}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+{{- end }}

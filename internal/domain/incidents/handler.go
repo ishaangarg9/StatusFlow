@@ -18,6 +18,15 @@ type Handler struct {
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// Gate placement (deliberate, and uniform with the monitors domain): the
+// read paths (list/get) call authz.Can here in the handler, while the mutating
+// paths (create/addUpdate/resolve) gate inside the service — the service always
+// re-checks with authz.Can as the first thing it does, so the mutation gate can
+// never be bypassed even if a future caller reaches the service another way.
+// Reads carry no such second entry point, so their check lives at the edge.
+// Both routes go through authz.Can; only the call site differs. Don't "tidy"
+// this into one place without moving the whole domain together — CLAUDE.md §4.
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/incidents", h.list)
 	r.Post("/incidents", h.create)

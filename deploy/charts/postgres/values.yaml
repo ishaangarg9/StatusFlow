@@ -34,6 +34,17 @@ auth:
 service:
   port: 5432
 
+# Ingress NetworkPolicy: default-deny 5432 and admit only StatusFlow's client
+# pods (api, worker, migrate — all carry app.kubernetes.io/part-of=statusflow).
+# Without it any pod in the namespace can reach the DB. Inert on kind (kindnet
+# doesn't enforce NP); enforced on k3s. Assumes clients share this namespace.
+networkPolicy:
+  enabled: true
+  # Label selector for pods allowed to reach Postgres. Override if your clients
+  # live under a different part-of value.
+  allowedClientSelector:
+    app.kubernetes.io/part-of: statusflow
+
 persistence:
   enabled: true
   size: 5Gi

@@ -92,7 +92,7 @@ func (s *Server) Routes() nethttp.Handler {
 	r.Route("/api/auth", func(r chi.Router) {
 		// Public (signup, login) — per-IP rate limited.
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.IPRateLimit(s.cfg.RateLimitLoginPerMin))
+			r.Use(middleware.IPRateLimit(s.cfg.RateLimitLoginPerMin, s.cfg.TrustedProxies))
 			usersH.MountPublic(r)
 		})
 		// Authenticated.
@@ -111,7 +111,7 @@ func (s *Server) Routes() nethttp.Handler {
 		// POST /api/invitations/accept takes a secret token: it's an online
 		// token-guessing surface, so rate-limit it per IP on top of Authn.
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.IPRateLimit(s.cfg.RateLimitAcceptPerMin))
+			r.Use(middleware.IPRateLimit(s.cfg.RateLimitAcceptPerMin, s.cfg.TrustedProxies))
 			invH.MountGlobal(r)
 		})
 

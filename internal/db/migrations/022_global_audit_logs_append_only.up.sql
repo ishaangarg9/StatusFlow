@@ -1,0 +1,11 @@
+-- Make global_audit_logs append-only for app_user. Migration 007 granted the
+-- app blanket SELECT/INSERT/UPDATE/DELETE on every table. global_audit_logs is
+-- the tamper-evident trail that must SURVIVE org deletion (it has no org_id and
+-- no RLS), so the app should only ever INSERT and SELECT it — never rewrite or
+-- erase history. A compromised app connection with UPDATE/DELETE here could
+-- quietly scrub that trail, which is exactly what the global sink exists to
+-- prevent. Revoke those two verbs; INSERT + SELECT remain.
+--
+-- Cross-tenant retention pruning still works: it runs as the privileged
+-- migration/admin role via prune_audit_logs (014), never as app_user.
+REVOKE UPDATE, DELETE ON global_audit_logs FROM app_user;

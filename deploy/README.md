@@ -98,7 +98,7 @@ Verify:
 ```bash
 kubectl -n statusflow get pods,svc,ingress,netpol
 kubectl -n statusflow exec pg-postgres-0 -- \
-  psql -U postgres -d statusflow -tAc "select version,dirty from schema_migrations;"   # -> 20|f
+  psql -U postgres -d statusflow -tAc "select version,dirty from schema_migrations;"   # -> 22|f
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8088/login                    # -> 200
 ```
 

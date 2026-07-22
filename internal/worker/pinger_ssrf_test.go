@@ -28,6 +28,12 @@ func TestSSRFBlockedIP(t *testing.T) {
 		"aws imdsv6":         "fd00:ec2::254",
 		"multicast":          "224.0.0.1",
 		"unspecified":        "0.0.0.0",
+		// IPv4-mapped IPv6 form of loopback: a rebinding target could resolve to
+		// ::ffff:127.0.0.1. net.IP.IsLoopback handles the 4-in-6 form, but pin it
+		// so a future refactor of the guard can't silently regress this class.
+		"ipv4-mapped loopback": "::ffff:127.0.0.1",
+		"ipv4-mapped rfc1918":  "::ffff:10.0.0.5",
+		"ipv4-mapped metadata": "::ffff:169.254.169.254",
 	}
 	for name, s := range blocked {
 		t.Run("blocked/"+name, func(t *testing.T) {

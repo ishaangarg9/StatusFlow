@@ -24,7 +24,10 @@ kind load docker-image --name "$CLUSTER" \
   statusflow-api:dev statusflow-worker:dev statusflow-migrate:dev statusflow-web:dev
 
 echo "==> Installing ingress-nginx (kind provider)"
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+# Pinned to a release tag: the `main` branch manifest can change (or break) at
+# any time upstream, making this validation non-reproducible. Bump deliberately.
+INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION:-controller-v1.11.3}"
+kubectl apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/${INGRESS_NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml"
 kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
 
 echo "==> Installing Postgres"

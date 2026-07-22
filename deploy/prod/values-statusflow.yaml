@@ -28,6 +28,10 @@ config:
   sessionCookieSecure: true              # invariant: true in any real deployment
   appBaseURL: "https://statusflow.<domain>"
   resendFrom: "StatusFlow <noreply@<domain>>"
+  # The api's only upstream is the in-cluster web (BFF) pod, so trust the pod
+  # network to derive the real client IP for rate limiting (k3s default pod CIDR
+  # is 10.42.0.0/16). Without this the per-IP login limiter is one global bucket.
+  trustedProxies: "10.42.0.0/16"
 
 # --- Sensitive app config from a Sealed Secret -------------------------------
 secrets:
@@ -72,3 +76,10 @@ ingress:
 # Worker-egress + default-deny NetworkPolicies on (k3s's CNI enforces them).
 networkPolicy:
   enabled: true
+  # k3s ships Traefik in kube-system, so the api's http port (incl. the Stripe
+  # webhook route) is admitted only from the web BFF pod + kube-system, not from
+  # every pod in the cluster.
+  ingressControllerNamespace: kube-system
+  # Set to the Prometheus namespace when P14 observability lands to pin the ops
+  # (metrics) ports; empty leaves them scrape-open to any in-cluster pod.
+  monitoringNamespace: ""

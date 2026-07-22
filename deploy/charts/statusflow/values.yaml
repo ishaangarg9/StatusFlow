@@ -67,6 +67,12 @@ config:
   rateLimit:
     loginPerMin: 10
     acceptPerMin: 20
+  # CIDRs/IPs whose X-Forwarded-For the api trusts when deriving the client IP
+  # for rate limiting. In-cluster the api's peer is always the web (BFF) pod, so
+  # WITHOUT this the per-IP login limiter collapses into one global bucket. Set
+  # to the pod network CIDR in front of the api (see prod values). Empty (dev)
+  # keys strictly on the connection peer.
+  trustedProxies: ""
   # Public origin of the app (the BFF's CSRF allowlist + Stripe return URLs).
   appBaseURL: "http://localhost:8088"
   resendFrom: "StatusFlow <noreply@statusflow.example>"
@@ -171,6 +177,14 @@ ingress:
 # --- NetworkPolicies -------------------------------------------------------
 networkPolicy:
   enabled: true
+  # Optional hardening for the api ingress rules. When set, the api's http port
+  # is admitted only from the web (BFF) pod PLUS this ingress-controller
+  # namespace (needed for the Stripe webhook route), and the ops (metrics) port
+  # only from the monitoring namespace. Leave empty to keep the prior behavior
+  # (admit that port from any in-cluster pod). Set these once you know your
+  # controller namespace, and monitoringNamespace when P14 observability lands.
+  ingressControllerNamespace: "" # e.g. kube-system (Traefik) or ingress-nginx
+  monitoringNamespace: "" # e.g. monitoring (Prometheus), P14
 
 serviceAccount:
   create: true

@@ -8,6 +8,7 @@ import { api } from "@/lib/api/client";
 import { qk } from "@/lib/query-keys";
 import { formatDateTime } from "@/lib/utils";
 import { Can } from "@/components/can";
+import { ListError } from "@/components/list-error";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,7 +23,7 @@ import {
 } from "@/components/ui/table";
 
 export function IncidentsList({ orgId }: { orgId: string }) {
-  const { data: incidents, isLoading } = useQuery({
+  const { data: incidents, isLoading, isError, refetch } = useQuery({
     queryKey: qk.incidents(orgId),
     queryFn: () => api.listIncidents(orgId),
     refetchInterval: 15000,
@@ -65,6 +66,8 @@ export function IncidentsList({ orgId }: { orgId: string }) {
         <CardContent className="pt-6">
           {isLoading ? (
             <Skeleton className="h-32 w-full" />
+          ) : isError ? (
+            <ListError message="Couldn't load incidents." onRetry={refetch} />
           ) : incidents && incidents.length > 0 ? (
             <Table>
               <TableHeader>
