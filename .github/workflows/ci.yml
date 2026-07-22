@@ -65,10 +65,12 @@ jobs:
 
       # Vulnerability scan: govulncheck only fails on vulnerabilities in code
       # paths actually reachable from our binaries, so it's low-noise as a gate.
-      # Pin the tool version (like staticcheck above) for reproducible runs.
+      # Track @latest rather than a version pin: govulncheck vendors x/tools, and
+      # an old pin (v1.1.3) fails to *compile* under a newer Go toolchain — the
+      # tool has to move with go.mod's Go version, so pinning it is a footgun.
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
+          go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
       # The authz gate: exhaustive permission matrix + no inline role checks
