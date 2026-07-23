@@ -1,0 +1,41 @@
+# Wave 3: the StatusFlow observability config — ServiceMonitor, PrometheusRule
+# (alerts), and the Grafana dashboard ConfigMap. Directory source over
+# deploy/observability/manifests (the values-*.yaml at the parent level are Helm
+# inputs, NOT k8s objects, so they are deliberately outside this path).
+#
+# Wave 3 so it syncs AFTER kube-prometheus-stack (wave 2) — its ServiceMonitor /
+# PrometheusRule kinds are CRDs the stack installs, so they must exist first. The
+# retry rides out the brief CRD-registration race. Replace <you>.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  source:
+    repoURL: https://github.com/<you>/SaaS.git
+    targetRevision: main
+    path: deploy/observability/manifests
+    directory:
+      recurse: false
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

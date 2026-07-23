@@ -1,0 +1,42 @@
+# Wave 2: prometheus-postgres-exporter — basic Postgres metrics (pg_up,
+# connections, txns) for the PostgresDown alert + Postgres panels. Connects as
+# app_user (invariant §2 holds — NO new/privileged DB role); DSN from the sealed
+# postgres-exporter-dsn secret. Multi-source: pinned chart + this repo's values.
+# Optional: if you drop this app, the PostgresDown rule simply never fires.
+# Replace <you>.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres-exporter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus-postgres-exporter
+      targetRevision: 8.2.0
+      helm:
+        valueFiles:
+          - $values/deploy/observability/values-postgres-exporter.yaml
+    - repoURL: https://github.com/<you>/SaaS.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

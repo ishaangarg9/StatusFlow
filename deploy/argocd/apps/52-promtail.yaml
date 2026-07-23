@@ -1,0 +1,39 @@
+# Wave 2: promtail (DaemonSet) — tails pod logs on each node and ships them to
+# Loki. Multi-source: pinned grafana chart + this repo's values via $values.
+# Replace <you>.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: promtail
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: promtail
+      targetRevision: 6.17.1
+      helm:
+        valueFiles:
+          - $values/deploy/observability/values-promtail.yaml
+    - repoURL: https://github.com/<you>/SaaS.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

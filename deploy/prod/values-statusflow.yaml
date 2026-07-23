@@ -80,6 +80,6 @@ networkPolicy:
   # webhook route) is admitted only from the web BFF pod + kube-system, not from
   # every pod in the cluster.
   ingressControllerNamespace: kube-system
-  # Set to the Prometheus namespace when P14 observability lands to pin the ops
-  # (metrics) ports; empty leaves them scrape-open to any in-cluster pod.
-  monitoringNamespace: ""
+  # P14: pin the api/worker ops (metrics) ports so only Prometheus in the
+  # `monitoring` namespace may scrape them (not every in-cluster pod).
+  monitoringNamespace: monitoring

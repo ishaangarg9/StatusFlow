@@ -1,0 +1,83 @@
+# StatusFlow-specific alerts. These LAYER ON TOP of the many rules
+# kube-prometheus-stack ships by default (KubePodCrashLooping, KubePodNotReady,
+# TargetDown, node/kubelet/etcd health, etc.) — don't re-invent those here.
+# Adopted by Prometheus via the open ruleSelector in the stack values; the
+# `release` label is belt-and-suspenders.
+#
+# NOTE on cert expiry: classic TLS-cert-expiry alerting is intentionally omitted
+# — edge TLS terminates at Cloudflare and the in-cluster Ingress is plain http,
+# so there is no serving cert here to expire. Certificate health is Cloudflare's.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: statusflow-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: statusflow
+spec:
+  groups:
+    - name: statusflow.availability
+      rules:
+        - alert: StatusFlowApiDown
+          # job=api comes from the ServiceMonitor jobLabel. absent() also fires
+          # if the target vanishes entirely (not just unhealthy).
+          expr: sum(up{job="api"}) == 0 or absent(up{job="api"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "StatusFlow API is down"
+            description: "No api target has been scrapeable for 5m — the app is unreachable."
+        - alert: StatusFlowWorkerDown
+          expr: sum(up{job="worker"}) == 0 or absent(up{job="worker"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "StatusFlow worker is down"
+            description: "No worker target scrapeable for 5m — monitor checks and incident automation are stalled."
+        - alert: PostgresDown
+          # pg_up is published by prometheus-postgres-exporter (app 53). If the
+          # exporter is not deployed this rule simply never fires.
+          expr: pg_up == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Postgres is unreachable"
+            description: "postgres-exporter reports pg_up=0 for 5m — the database is down or unreachable."
+    - name: statusflow.app
+      rules:
+        - alert: HighCheckFailureRate
+          # >50% of monitor checks failing over 15m — a broad outage or a bad
+          # deploy, not one flaky monitor.
+          expr: |
+            sum(rate(statusflow_worker_checks_total{result="down"}[10m]))
+              /
+            clamp_min(sum(rate(statusflow_worker_checks_total[10m])), 0.001) > 0.5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Majority of monitor checks are failing"
+            description: "More than 50% of worker checks returned down over the last 10m for 15m straight."
+        - alert: SSRFBlockSpike
+          # The SSRF dial guard is rejecting outbound checks at a sustained rate
+          # — worth a look (misconfigured monitor URL, or someone probing).
+          expr: sum(rate(statusflow_worker_ssrf_blocked_total[10m])) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "SSRF guard is blocking checks"
+            description: "The worker's SSRF dial guard is rejecting >0.2 checks/s (sustained 10m)."
+        - alert: AuthThrottleSpike
+          # Sustained login/IP throttle rejections — credential stuffing or abuse.
+          expr: sum(rate(statusflow_auth_throttle_hits_total[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Auth rate limiter is firing heavily"
+            description: "In-process auth throttling is rejecting >1 req/s (sustained 10m) — possible brute-force/abuse."

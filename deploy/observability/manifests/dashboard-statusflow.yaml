@@ -1,0 +1,175 @@
+# StatusFlow application dashboard, auto-imported by the Grafana sidecar (it
+# watches ConfigMaps labelled grafana_dashboard). Panels are built off the real
+# statusflow_* series exposed on the ops /metrics endpoint. Cluster/node/
+# kube-state and Postgres-pod resource views come FREE from the dashboards
+# bundled with kube-prometheus-stack — not re-authored here.
+#
+# The dashboard uses a `datasource` template variable so it binds to whatever the
+# provisioned Prometheus datasource uid is, rather than hard-coding one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: statusflow-app-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: statusflow
+data:
+  statusflow-app.json: |-
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "graphTooltip": 1,
+      "schemaVersion": 39,
+      "tags": ["statusflow"],
+      "title": "StatusFlow — Application",
+      "time": {"from": "now-6h", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {},
+            "hide": 0,
+            "label": "Data source"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Request rate (req/s)",
+          "type": "stat",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(statusflow_http_request_duration_seconds_count[5m]))"}
+          ]
+        },
+        {
+          "id": 2,
+          "title": "5xx error rate",
+          "type": "stat",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "reqps", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.1}]}}, "overrides": []},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(statusflow_http_request_duration_seconds_count{status=~\"5..\"}[5m]))"}
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Open incidents rate (worker)",
+          "type": "stat",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(statusflow_worker_incidents_total{action=\"open\"}[15m]))"}
+          ]
+        },
+        {
+          "id": 4,
+          "title": "SSRF blocks rate",
+          "type": "stat",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.2}]}}, "overrides": []},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(statusflow_worker_ssrf_blocked_total[10m]))"}
+          ]
+        },
+        {
+          "id": 5,
+          "title": "HTTP latency (quantiles)",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "p50", "expr": "histogram_quantile(0.5, sum by (le) (rate(statusflow_http_request_duration_seconds_bucket[5m])))"},
+            {"refId": "B", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum by (le) (rate(statusflow_http_request_duration_seconds_bucket[5m])))"},
+            {"refId": "C", "legendFormat": "p99", "expr": "histogram_quantile(0.99, sum by (le) (rate(statusflow_http_request_duration_seconds_bucket[5m])))"}
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Request rate by route",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "{{route}}", "expr": "sum by (route) (rate(statusflow_http_request_duration_seconds_count[5m]))"}
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Monitor checks by result",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "{{result}}", "expr": "sum by (result) (rate(statusflow_worker_checks_total[5m]))"}
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Check latency p95",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum by (le) (rate(statusflow_worker_check_duration_seconds_bucket[5m])))"}
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Incidents (open / resolve)",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "{{action}}", "expr": "sum by (action) (rate(statusflow_worker_incidents_total[15m]))"}
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Auth throttle hits by source",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "{{source}}", "expr": "sum by (source) (rate(statusflow_auth_throttle_hits_total[10m]))"}
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Claim batch size (last tick)",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "claimed", "expr": "statusflow_worker_claim_batch_size"}
+          ]
+        },
+        {
+          "id": 12,
+          "title": "Invitations processed rate",
+          "type": "timeseries",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "targets": [
+            {"refId": "A", "legendFormat": "processed", "expr": "sum(rate(statusflow_worker_invitations_processed_total[15m]))"}
+          ]
+        }
+      ]
+    }

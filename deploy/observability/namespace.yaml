@@ -1,0 +1,17 @@
+# The monitoring namespace. Day-0 bootstrap (the house rule is
+# CreateNamespace=false — see deploy/argocd/apps/*), so it must exist BEFORE the
+# observability Applications sync. Apply it once alongside the statusflow/
+# cloudflared namespaces:
+#
+#   kubectl apply -f deploy/observability/namespace.yaml
+#
+# The kubernetes.io/metadata.name label is set automatically by the API server;
+# the statusflow chart's api/worker NetworkPolicies pin their ops (metrics) ports
+# to `namespaceSelector: kubernetes.io/metadata.name: monitoring`, so Prometheus
+# in THIS namespace is the only thing allowed to scrape them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: statusflow-platform
