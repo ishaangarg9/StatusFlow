@@ -52,7 +52,13 @@ func ssrfDialControl(_, address string, _ syscall.RawConn) error {
 	if ip == nil {
 		return errors.New("ssrf: unresolved host")
 	}
-	return ssrfBlockedIP(ip)
+	if err := ssrfBlockedIP(ip); err != nil {
+		// Count real dial-time rejections here (not in the pure, unit-tested
+		// ssrfBlockedIP predicate) so the counter reflects blocked outbound checks.
+		metrics.SSRFBlockedTotal.Inc()
+		return err
+	}
+	return nil
 }
 
 // ssrfBlockedIP returns a non-nil error if ip is one the worker must never
