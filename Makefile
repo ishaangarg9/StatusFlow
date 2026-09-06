@@ -1,4 +1,4 @@
-.PHONY: db.up db.down migrate.up migrate.down sqlc api worker seed test test.proof lint fmt docker.api docker.worker docker.web docker.migrate docker.all kind.validate kind.down
+.PHONY: db.up db.down migrate.up migrate.down sqlc api worker seed dev test test.proof lint fmt docker.api docker.worker docker.web docker.migrate docker.all kind.validate kind.down
 
 db.up:
 	docker compose up -d db
@@ -25,6 +25,11 @@ worker:
 # signs visitors into (internal/demo). Idempotent; safe to re-run.
 seed:
 	go run ./cmd/seed
+
+# One command, one terminal: db up -> migrate -> seed -> api + worker + web,
+# with prefixed interleaved logs. Ctrl+C stops all three. See scripts/dev.sh.
+dev:
+	./scripts/dev.sh
 
 test:
 	go test ./...
