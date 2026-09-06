@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/ishaangarg9/statusflow/internal/domain/audit"
+	"github.com/ishaangarg9/statusflow/internal/metrics"
 )
 
 // IncidentEngine drives the per-monitor up/down state machine:
@@ -105,6 +106,7 @@ func (e *IncidentEngine) openIncident(ctx context.Context, tx pgx.Tx, orgID, mon
 		}
 		return err
 	}
+	metrics.IncidentsTotal.WithLabelValues("open").Inc()
 	return audit.Record(ctx, tx, audit.Entry{
 		OrgID:        orgID,
 		Action:       "incident:open", // system actor (NULL)
@@ -130,6 +132,7 @@ func (e *IncidentEngine) resolveIncident(ctx context.Context, tx pgx.Tx, orgID, 
 		}
 		return err
 	}
+	metrics.IncidentsTotal.WithLabelValues("resolve").Inc()
 	return audit.Record(ctx, tx, audit.Entry{
 		OrgID:        orgID,
 		Action:       "incident:resolve", // system actor (NULL)

@@ -1,0 +1,17 @@
+# promtail values — a DaemonSet that tails every pod's stdout on the node and
+# ships it to Loki. StatusFlow logs slog JSON, and promtail's default relabels
+# attach namespace/pod/container/app labels, so a line can be filtered to a
+# tenant by the org_id field the api now logs (see internal/http/middleware).
+#
+# Chart pinned in deploy/argocd/apps/52-promtail.yaml.
+
+config:
+  clients:
+    - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -54,9 +54,13 @@ before it can. Do these once, by hand (they're in `deploy/vps/README.md` §3):
    (`deploy/sealed-secrets/install.sh`), and `kubectl apply -f sealed/` done so
    the real Secrets exist. Argo manages the sealed *payloads* afterward; the
    controller stays out of band on purpose (it holds the decryption key).
-2. **Namespaces** created: `kubectl create namespace statusflow cloudflared`
+2. **Namespaces** created: `kubectl create namespace statusflow cloudflared monitoring`
    (the apps use `CreateNamespace=false` — namespaces are a bootstrap concern,
-   not app churn).
+   not app churn). `monitoring` is for P14; `kubectl apply -f
+   deploy/observability/namespace.yaml` also creates it.
+   The P14 sealed secrets (`grafana-admin`, `alertmanager-discord`,
+   `postgres-exporter-dsn`) are produced by `deploy/sealed-secrets/seal.sh` in the
+   same `kubectl apply -f sealed/` as the rest.
 3. **Images** on the node (registry or `k3s ctr images import`), tags set in
    `deploy/prod/values-statusflow.yaml`.
 4. The **repo is pushed** to `https://github.com/<you>/SaaS.git` and reachable by
@@ -85,8 +89,10 @@ kubectl -n argocd get applications        # root, secrets, postgres, statusflow,
 ```
 
 Sync waves serialize the dependency chain: secrets (-1) → Postgres (0) →
-statusflow + cloudflared (1). The statusflow app retries with backoff so a cold
-start (Postgres still electing, secret just unsealed) self-heals.
+statusflow + cloudflared (1) → the P14 observability charts (2) →
+observability-config (3, the ServiceMonitor/alerts/dashboard, after the
+Prometheus-Operator CRDs from wave 2 exist). The statusflow app retries with
+backoff so a cold start (Postgres still electing, secret just unsealed) self-heals.
 
 ## The demo: change → PR → merge → auto-sync → rollback
 
@@ -110,12 +116,25 @@ argocd app rollback statusflow <REVISION>
 `selfHeal: true` means a manual `kubectl edit`/`scale` is reverted to match Git
 within seconds — try it to prove the cluster can't drift from the repo.
 
-## Adding a new platform component later (P14, etc.)
+## P14 observability (landed)
 
-Drop a new `apps/NN-<thing>.yaml` Application (Prometheus/Grafana/Loki for P14,
-another project, …), commit, and the root app-of-apps adopts it on the next sync.
-No bootstrap, no kubectl. Pre-wire its `<thing>.<domain>` host in
-`deploy/cloudflared/configmap.yaml` and gate ops UIs behind Cloudflare Access.
+`apps/50-53` are the multi-source Helm Applications (kube-prometheus-stack, loki,
+promtail, prometheus-postgres-exporter) and `apps/54` is the directory app that
+applies the StatusFlow ServiceMonitor + PrometheusRule + Grafana dashboard from
+`deploy/observability/manifests/`. Values live in Git under
+`deploy/observability/values-*.yaml` and are pulled via the multi-source
+`$values` ref. See `deploy/observability/README.md` for the metrics/logs/alerts
+surface and the Grafana demo. The `grafana.<domain>` host is already wired in the
+tunnel — gate it behind Cloudflare Access, same as `argocd.<domain>`.
+
+## Adding a new platform component later
+
+Drop a new `apps/NN-<thing>.yaml` Application, commit, and the root app-of-apps
+adopts it on the next sync — no bootstrap, no kubectl. Remote Helm charts use the
+multi-source pattern in `apps/50-*.yaml`; add the chart repo to `project.yaml`
+`sourceRepos` (and any cluster-scoped kinds it needs to `clusterResourceWhitelist`).
+Pre-wire its `<thing>.<domain>` host in `deploy/cloudflared/configmap.yaml` and
+gate ops UIs behind Cloudflare Access.
 
 ## Notes / honest gaps
 

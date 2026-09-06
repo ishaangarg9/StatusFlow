@@ -1,0 +1,50 @@
+# Wave 2: kube-prometheus-stack (Prometheus Operator + Prometheus + Alertmanager
+# + Grafana + node-exporter + kube-state-metrics). Installs the monitoring CRDs
+# (ServiceMonitor/PrometheusRule/…) that the wave-3 config app depends on, which
+# is why it syncs before it.
+#
+# Multi-source: source 1 is the pinned chart from the prometheus-community Helm
+# repo; source 2 is THIS repo (ref: values) so the values file lives in Git and
+# is referenced via $values. Both source repos are allow-listed in project.yaml.
+#
+# The `monitoring` namespace is a day-0 bootstrap (CreateNamespace=false) — apply
+# deploy/observability/namespace.yaml once before this syncs. Replace <you>.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: statusflow
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 87.19.0
+      helm:
+        valueFiles:
+          - $values/deploy/observability/values-kube-prometheus-stack.yaml
+    - repoURL: https://github.com/<you>/SaaS.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      # The chart ships large CRDs; server-side apply avoids the
+      # last-applied-configuration annotation size limit.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

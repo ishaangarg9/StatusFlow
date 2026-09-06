@@ -1,0 +1,146 @@
+# kube-prometheus-stack values — Prometheus + Alertmanager + Grafana +
+# node-exporter + kube-state-metrics. Tuned for a SINGLE small k3s node: modest
+# retention, small local-path PVCs, trimmed requests. Chart pinned in the Argo
+# Application (deploy/argocd/apps/50-kube-prometheus-stack.yaml).
+#
+# Edge TLS terminates at Cloudflare; the Grafana Ingress is plain http behind
+# Traefik and MUST be gated by Cloudflare Access (the grafana.<domain> host is
+# already wired in deploy/cloudflared/configmap.yaml). Replace <domain>.
+#
+# All secret material comes from Sealed Secrets (grafana-admin,
+# alertmanager-discord) — nothing sensitive is inline here.
+
+fullnameOverride: kube-prometheus-stack
+
+# --- Prometheus ------------------------------------------------------------
+prometheus:
+  ingress:
+    enabled: false            # in-cluster only; never fronted by the edge
+  prometheusSpec:
+    # Adopt ServiceMonitors / PrometheusRules from ALL namespaces (the app lives
+    # in `statusflow`, its ServiceMonitor+rules live in `monitoring`), not just
+    # release-labelled ones. This is what lets deploy/observability/manifests/*
+    # be picked up.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+    retention: 7d
+    retentionSize: 4GB
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+# --- Alertmanager -> Discord ----------------------------------------------
+alertmanager:
+  ingress:
+    enabled: false
+  alertmanagerSpec:
+    # Mounts the sealed secret at /etc/alertmanager/secrets/alertmanager-discord/.
+    secrets:
+      - alertmanager-discord
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ["alertname", "namespace"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: discord
+      routes:
+        # Silence the always-firing heartbeat alert.
+        - matchers:
+            - alertname = "Watchdog"
+          receiver: "null"
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          # Read the webhook from the mounted sealed secret, never inline.
+          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook_url
+            send_resolved: true
+
+# --- Grafana ---------------------------------------------------------------
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: web
+    hosts:
+      - grafana.<domain>
+    path: /
+    pathType: Prefix
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  # Auto-import dashboards from any ConfigMap labelled grafana_dashboard (our
+  # deploy/observability/manifests/dashboard-*.yaml), cluster-wide.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+  # The Prometheus datasource is provisioned by the chart; add Loki alongside it.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+
+# --- node-exporter + kube-state-metrics (power the bundled cluster dashboards) --
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 128Mi

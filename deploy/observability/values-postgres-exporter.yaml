@@ -1,0 +1,26 @@
+# prometheus-postgres-exporter values — basic Postgres metrics (up, connections,
+# tuples, txns) for the PostgresDown alert and the Postgres panels. It connects
+# as `app_user` (NOSUPERUSER/NOBYPASSRLS — invariant §2 holds; no new DB role),
+# so it sees only what app_user can read from pg_stat_*. Rich per-table stats
+# would need a dedicated monitoring role (privileged/migration work) — deferred.
+#
+# The DSN comes from the sealed `postgres-exporter-dsn` secret (monitoring ns),
+# built by deploy/sealed-secrets/seal.sh from APP_USER_PASSWORD. Chart pinned in
+# deploy/argocd/apps/53-postgres-exporter.yaml.
+
+config:
+  datasourceSecret:
+    name: postgres-exporter-dsn
+    key: DATA_SOURCE_NAME
+
+# The chart ships its own ServiceMonitor; Prometheus adopts it via the open
+# selectors in values-kube-prometheus-stack.yaml.
+serviceMonitor:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi

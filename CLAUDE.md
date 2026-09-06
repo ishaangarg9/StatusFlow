@@ -283,8 +283,31 @@ sealed *payloads*, not the key holder); namespaces are bootstrap too
 duplication) and `deploy/cloudflared/` + `deploy/sealed-secrets/sealed/` as
 directory sources. README documents the change→PR→merge→auto-sync→rollback demo.
 All manifests YAML-linted + the referenced charts `helm template`-verified (0
-inline Secrets); not run here (no box/pushed repo). Remaining: P14 (observability)
-onward.
+inline Secrets); not run here (no box/pushed repo).
+**P14 (Observability) ✅** — the platform now monitors its own uptime, delivered
+through the same Argo CD app-of-apps. Two parts. **(A) App instrumentation**
+(runnable + verified locally): two new metrics in the existing private registry
+(`internal/metrics`) — `statusflow_worker_incidents_total{action}` (worker-driven
+open/resolve, counted only on a real transition, not the ON CONFLICT no-op) and
+`statusflow_worker_ssrf_blocked_total` (counted in `ssrfDialControl`, keeping the
+pure `ssrfBlockedIP` predicate side-effect-free) — plus per-tenant log correlation:
+`RequestContext` now holds the request logger in a per-request pointer so `Tenant`'s
+`EnrichLogger(org_id, user_id)` reaches every line incl. the completion line (ids
+only, §6). **(B) Cluster artifacts** (render-verified, not run — no box): Argo
+multi-source Helm apps `deploy/argocd/apps/50-53` (kube-prometheus-stack, loki
+single-binary, promtail, prometheus-postgres-exporter — the exporter connects as
+**`app_user`**, no privileged role, §2 intact) sync-waved after the app (2), then a
+directory app `54` (wave 3) applies the StatusFlow ServiceMonitor + PrometheusRule
+(alerts → **Discord** via the sealed `alertmanager-discord` webhook) + a Grafana
+dashboard ConfigMap. Values live in Git (`deploy/observability/values-*.yaml`, via
+the `$values` ref). The api/worker **ops** metrics port is now NetworkPolicy-pinned
+to the `monitoring` namespace (`networkPolicy.monitoringNamespace`); the AppProject
+allow-lists exactly the cluster-scoped kinds kube-prometheus-stack needs (CRDs,
+cluster RBAC, admission webhooks) + the two chart repos — least-privilege GitOps
+holds. Grafana rides the pre-wired `grafana.<domain>` tunnel host (gate behind
+Cloudflare Access). Go side: `go vet`/`staticcheck`/tests green + `/metrics`
+exposition proven; charts `helm template`-verified (0 inline Secrets bar the charts'
+own managed ones). See `deploy/observability/README.md`. Remaining: P15/P16.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 

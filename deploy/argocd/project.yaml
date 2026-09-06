@@ -16,6 +16,10 @@ spec:
   description: StatusFlow SaaS + its platform addons (single-node k3s).
   sourceRepos:
     - https://github.com/<you>/SaaS.git
+    # P14 observability charts (kube-prometheus-stack, loki, promtail,
+    # prometheus-postgres-exporter). Argo treats a Helm chart repo as a source.
+    - https://prometheus-community.github.io/helm-charts
+    - https://grafana.github.io/helm-charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: statusflow
@@ -23,10 +27,24 @@ spec:
       namespace: cloudflared
     - server: https://kubernetes.default.svc
       namespace: argocd          # the root app-of-apps lives here
-  # The migration Job and Postgres init create namespaced resources only; no
-  # cluster-scoped resources are needed by the app charts. NetworkPolicies are
-  # namespaced. Allow the handful the charts actually use; deny the rest.
-  clusterResourceWhitelist: []
+    - server: https://kubernetes.default.svc
+      namespace: monitoring      # P14: Prometheus/Grafana/Loki
+  # The app charts need no cluster-scoped resources (their NetworkPolicies, the
+  # migration Job, and Postgres init are all namespaced). P14's
+  # kube-prometheus-stack does: the Prometheus-Operator CRDs, its cluster RBAC,
+  # and its admission webhooks. Allow exactly those kinds; deny everything else,
+  # keeping the least-privilege GitOps story.
+  clusterResourceWhitelist:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"

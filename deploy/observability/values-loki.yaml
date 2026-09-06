@@ -1,0 +1,66 @@
+# Loki values — SINGLE-BINARY mode on filesystem storage, sized for one k3s
+# node. This is the log store; promtail (values-loki-promtail.yaml) ships pod
+# logs into it and Grafana reads it via the Loki datasource. In-cluster only —
+# no ingress, no auth (fronted by NetworkPolicy + the cluster boundary).
+#
+# Chart pinned in deploy/argocd/apps/51-loki.yaml. Release name `loki`, so the
+# push/query Service is loki.monitoring.svc.cluster.local:3100.
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 72h
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+  # Single-binary needs a target; the chart wires it, but be explicit.
+  pattern_ingester:
+    enabled: false
+
+# The single StatefulSet replica; everything else off.
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# Disable the scalable/distributed components and the extras we don't need on a
+# single box.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+gateway:
+  enabled: false
+minio:
+  enabled: false

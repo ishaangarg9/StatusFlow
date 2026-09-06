@@ -93,6 +93,28 @@ var (
 		Name:      "invitations_processed_total",
 		Help:      "Invitation outbox rows reaching a terminal state, sent or dropped (cumulative).",
 	})
+
+	// IncidentsTotal counts incidents the worker's engine drove to a state
+	// change, by action ("open"/"resolve"). Only worker-authored transitions
+	// land here (manual incidents go through the API path); it separates the
+	// automated availability signal from human incident management.
+	IncidentsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "statusflow",
+		Subsystem: "worker",
+		Name:      "incidents_total",
+		Help:      "Worker-driven incident transitions, by action (open/resolve).",
+	}, []string{"action"})
+
+	// SSRFBlockedTotal counts outbound monitor checks the SSRF dial guard
+	// refused (loopback/private/link-local/metadata destinations), cumulative.
+	// These surface as a "down" check too; this is the direct guard-rejection
+	// signal, kept unlabelled by destination on purpose (cardinality).
+	SSRFBlockedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "statusflow",
+		Subsystem: "worker",
+		Name:      "ssrf_blocked_total",
+		Help:      "Outbound monitor checks rejected by the SSRF dial guard (cumulative).",
+	})
 )
 
 func init() {
@@ -106,6 +128,8 @@ func init() {
 		MonitorsClaimed,
 		ClaimBatchSize,
 		InvitationsProcessed,
+		IncidentsTotal,
+		SSRFBlockedTotal,
 	)
 }
 

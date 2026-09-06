@@ -16,6 +16,9 @@
 #   statusflow-app       -> values-statusflow.yaml  secrets.existingSecret
 #   statusflow-pg-auth   -> values-postgres.yaml    auth.existingSecret
 #   cloudflared-credentials (ns cloudflared) -> cloudflared deployment volume
+#   grafana-admin        (ns monitoring) -> values-kube-prometheus-stack.yaml grafana.admin.existingSecret
+#   alertmanager-discord (ns monitoring) -> …stack.yaml alertmanager.alertmanagerSpec.secrets
+#   postgres-exporter-dsn(ns monitoring) -> values-postgres-exporter.yaml config.datasourceSecret
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -70,5 +73,23 @@ if [[ -n "${TUNNEL_CREDENTIALS_FILE:-}" && -f "$TUNNEL_CREDENTIALS_FILE" ]]; the
 else
   echo "  (skipping cloudflared-credentials: set TUNNEL_CREDENTIALS_FILE to the tunnel JSON)"
 fi
+
+# --- P14 observability (monitoring namespace) ------------------------------
+MON="${MON:-monitoring}"
+
+# Grafana admin login.
+mk grafana-admin "$MON" \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password="${GRAFANA_ADMIN_PASSWORD:?set in secrets.env}"
+
+# Alertmanager -> Discord webhook (mounted at
+# /etc/alertmanager/secrets/alertmanager-discord/webhook_url).
+mk alertmanager-discord "$MON" \
+  --from-literal=webhook_url="${ALERTMANAGER_DISCORD_WEBHOOK:-}"
+
+# postgres-exporter DSN — app_user (NOT privileged; §2 holds), reusing the same
+# password + in-cluster host as the app's DATABASE_URL.
+EXPORTER_DSN="postgres://app_user:${APP_USER_PASSWORD}@${PG_HOST}:5432/statusflow?sslmode=disable"
+mk postgres-exporter-dsn "$MON" --from-literal=DATA_SOURCE_NAME="$EXPORTER_DSN"
 
 echo ">> done. Commit ./sealed/*.yaml (encrypted). NEVER commit secrets.env."

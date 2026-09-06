@@ -42,6 +42,9 @@ func Tenant(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 
 			ac := authz.AuthContext{UserID: user.ID, OrgID: orgID, Role: m.Role}
+			// Correlate every subsequent log line for this request (incl. the
+			// completion line) with the tenant + actor. Ids only — never secrets.
+			EnrichLogger(r.Context(), "org_id", orgID.String(), "user_id", user.ID.String())
 			ctx := context.WithValue(r.Context(), authCtxKey, ac)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
