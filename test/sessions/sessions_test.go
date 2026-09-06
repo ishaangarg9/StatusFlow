@@ -133,7 +133,7 @@ func TestExpiredSessionDoesNotResolve(t *testing.T) {
 func TestRevokeSession_ScopedToOwner(t *testing.T) {
 	ctx, pool := setup(t)
 	store := newStore(pool, time.Hour)
-	svc := users.NewService(pool, store)
+	svc := users.NewService(pool, store, false, time.Hour)
 
 	victim := seedUser(t, ctx, pool)
 	attacker := seedUser(t, ctx, pool)

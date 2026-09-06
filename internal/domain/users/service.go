@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ishaangarg9/statusflow/internal/auth"
+	"github.com/ishaangarg9/statusflow/internal/demo"
 	"github.com/ishaangarg9/statusflow/internal/metrics"
 	"github.com/ishaangarg9/statusflow/internal/shared"
 )
@@ -25,16 +26,20 @@ const (
 // Service owns the auth domain. users + sessions are global tables (no RLS),
 // so every query here runs on the bare pool — no WithOrgTx.
 type Service struct {
-	pool     *pgxpool.Pool
-	sessions *auth.SessionStore
-	throttle *auth.LoginThrottle
+	pool           *pgxpool.Pool
+	sessions       *auth.SessionStore
+	throttle       *auth.LoginThrottle
+	demoEnabled    bool
+	demoSessionTTL time.Duration
 }
 
-func NewService(pool *pgxpool.Pool, sessions *auth.SessionStore) *Service {
+func NewService(pool *pgxpool.Pool, sessions *auth.SessionStore, demoEnabled bool, demoSessionTTL time.Duration) *Service {
 	return &Service{
-		pool:     pool,
-		sessions: sessions,
-		throttle: auth.NewLoginThrottle(loginFailMax, loginFailWindow),
+		pool:           pool,
+		sessions:       sessions,
+		throttle:       auth.NewLoginThrottle(loginFailMax, loginFailWindow),
+		demoEnabled:    demoEnabled,
+		demoSessionTTL: demoSessionTTL,
 	}
 }
 
@@ -158,6 +163,41 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (rawToken string, _ 
 	}
 	s.throttle.Reset(email)
 	return raw, &UserView{ID: id, Email: em, Name: name}, nil
+}
+
+// DemoLogin signs the caller into the fixed, viewer-only account
+// internal/demo.ViewerEmail — no password, since the whole point is a
+// one-click entry point. Safe because the account is provisioned by cmd/seed
+// with ONLY a viewer membership on the demo org: everything a visitor can't
+// do is enforced by the existing authz matrix, not by this shortcut. 404 when
+// disabled or the seed job hasn't run yet, so the response never reveals
+// which reason applies.
+//
+// The minted session uses demoSessionTTL, not the normal SessionTTL: the
+// account is shared and disposable, concurrent visitors are allowed (no
+// revoke-on-login — that would let one visitor silently kick another out of
+// an in-progress demo), so the only thing bounding how many live sessions this
+// one account can accumulate is a short expiry plus the dedicated per-IP rate
+// limit on this route (internal/http/server.go).
+func (s *Service) DemoLogin(ctx context.Context, ua, ip string) (rawToken string, _ *UserView, _ time.Duration, _ error) {
+	if !s.demoEnabled {
+		return "", nil, 0, shared.NotFound()
+	}
+	var u UserView
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, email, name FROM users WHERE email = $1`, demo.ViewerEmail,
+	).Scan(&u.ID, &u.Email, &u.Name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, 0, shared.NotFound()
+		}
+		return "", nil, 0, shared.Internal(err)
+	}
+	raw, _, err := s.sessions.CreateWithTTL(ctx, u.ID, ua, ip, s.demoSessionTTL)
+	if err != nil {
+		return "", nil, 0, shared.Internal(err)
+	}
+	return raw, &u, s.demoSessionTTL, nil
 }
 
 // Logout revokes a specific session. The handler clears the cookie.

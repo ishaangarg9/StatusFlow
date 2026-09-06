@@ -40,12 +40,23 @@ func NewSessionStore(pool *pgxpool.Pool, ttl time.Duration, cookieName string, s
 // Create inserts a session row and returns the RAW token for the cookie.
 // Only the hash is stored.
 func (s *SessionStore) Create(ctx context.Context, userID uuid.UUID, ua, ip string) (rawToken string, _ *Session, _ error) {
+	return s.createWithTTL(ctx, userID, ua, ip, s.ttl)
+}
+
+// CreateWithTTL is Create but with a caller-supplied lifetime instead of the
+// store's configured TTL — for sessions that should expire sooner than a
+// normal login (the P15 demo account; see users.Service.DemoLogin).
+func (s *SessionStore) CreateWithTTL(ctx context.Context, userID uuid.UUID, ua, ip string, ttl time.Duration) (rawToken string, _ *Session, _ error) {
+	return s.createWithTTL(ctx, userID, ua, ip, ttl)
+}
+
+func (s *SessionStore) createWithTTL(ctx context.Context, userID uuid.UUID, ua, ip string, ttl time.Duration) (rawToken string, _ *Session, _ error) {
 	raw, err := NewSessionToken()
 	if err != nil {
 		return "", nil, fmt.Errorf("token: %w", err)
 	}
 	hash := HashToken(raw)
-	expires := time.Now().Add(s.ttl)
+	expires := time.Now().Add(ttl)
 
 	var sess Session
 	err = s.pool.QueryRow(ctx, `
@@ -117,6 +128,18 @@ func (s *SessionStore) RevokeAllForUser(ctx context.Context, userID uuid.UUID) e
 
 // SetCookie writes the session cookie with safe defaults.
 func (s *SessionStore) SetCookie(w http.ResponseWriter, rawToken string) {
+	s.setCookie(w, rawToken, s.ttl)
+}
+
+// SetCookieWithTTL is SetCookie but with a caller-supplied Max-Age, so a
+// cookie minted alongside CreateWithTTL doesn't outlive the session it
+// actually points to (the server would reject it as expired regardless, but a
+// matching Max-Age avoids a stale-looking "logged in" cookie in the browser).
+func (s *SessionStore) SetCookieWithTTL(w http.ResponseWriter, rawToken string, ttl time.Duration) {
+	s.setCookie(w, rawToken, ttl)
+}
+
+func (s *SessionStore) setCookie(w http.ResponseWriter, rawToken string, ttl time.Duration) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    rawToken,
@@ -124,7 +147,7 @@ func (s *SessionStore) SetCookie(w http.ResponseWriter, rawToken string) {
 		HttpOnly: true,
 		Secure:   s.secure,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(s.ttl.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 }
 

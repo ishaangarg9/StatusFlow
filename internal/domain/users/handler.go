@@ -32,6 +32,13 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/login", h.login)
 }
 
+// MountDemo mounts POST /api/auth/demo-login on its own route, so the caller
+// can rate-limit it independently of signup/login (it skips the password
+// check entirely, so it's cheaper to hammer than real login).
+func (h *Handler) MountDemo(r chi.Router) {
+	r.Post("/demo-login", h.demoLogin)
+}
+
 // MountAuthenticated mounts session-required auth routes.
 // Caller applies the Authn middleware first.
 func (h *Handler) MountAuthenticated(r chi.Router) {
@@ -82,6 +89,16 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.sessions.SetCookie(w, raw)
+	shared.WriteJSON(w, http.StatusOK, map[string]any{"user": u})
+}
+
+func (h *Handler) demoLogin(w http.ResponseWriter, r *http.Request) {
+	raw, u, ttl, err := h.svc.DemoLogin(r.Context(), r.UserAgent(), remoteIP(r))
+	if err != nil {
+		shared.WriteErr(w, err)
+		return
+	}
+	h.sessions.SetCookieWithTTL(w, raw, ttl)
 	shared.WriteJSON(w, http.StatusOK, map[string]any{"user": u})
 }
 

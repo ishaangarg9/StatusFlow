@@ -67,6 +67,16 @@ config:
   rateLimit:
     loginPerMin: 10
     acceptPerMin: 20
+    # Independent cap on POST /api/auth/demo-login (P15): it skips the
+    # password check entirely, so it's cheaper to spam than real login.
+    demoPerMin: 20
+  # P15 "Live demo" button. Off by default — flip on only once cmd/seed has
+  # provisioned internal/demo's fixed viewer account in this environment.
+  # sessionTTLMinutes is deliberately much shorter than sessionTTLDays: the
+  # account is shared, so a short expiry is what bounds live-session growth.
+  demo:
+    enabled: false
+    sessionTTLMinutes: 60
   # CIDRs/IPs whose X-Forwarded-For the api trusts when deriving the client IP
   # for rate limiting. In-cluster the api's peer is always the web (BFF) pod, so
   # WITHOUT this the per-IP login limiter collapses into one global bucket. Set

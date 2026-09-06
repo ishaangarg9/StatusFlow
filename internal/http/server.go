@@ -49,7 +49,7 @@ func NewServer(cfg *shared.Config, pool *pgxpool.Pool, sessions *auth.SessionSto
 //	/api/orgs/{orgId}/*      Authn + Tenant (membership) required
 func (s *Server) Routes() nethttp.Handler {
 	// Domain wiring
-	usersH := users.NewHandler(users.NewService(s.pool, s.sessions), s.sessions)
+	usersH := users.NewHandler(users.NewService(s.pool, s.sessions, s.cfg.DemoEnabled, s.cfg.DemoSessionTTL), s.sessions)
 	orgsH := orgs.NewHandler(orgs.NewService(s.pool))
 	membersH := memberships.NewHandler(memberships.NewService(s.pool))
 	// The API only issues invitations and enqueues delivery; the worker process
@@ -94,6 +94,12 @@ func (s *Server) Routes() nethttp.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.IPRateLimit(s.cfg.RateLimitLoginPerMin, s.cfg.TrustedProxies))
 			usersH.MountPublic(r)
+		})
+		// Demo login — its own, independently tunable rate limit: it never
+		// runs a password check, so it's cheaper to spam than real login.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.IPRateLimit(s.cfg.RateLimitDemoPerMin, s.cfg.TrustedProxies))
+			usersH.MountDemo(r)
 		})
 		// Authenticated.
 		r.Group(func(r chi.Router) {

@@ -1,4 +1,4 @@
-.PHONY: db.up db.down migrate.up migrate.down sqlc api worker test test.proof lint fmt docker.api docker.worker docker.web docker.migrate docker.all kind.validate kind.down
+.PHONY: db.up db.down migrate.up migrate.down sqlc api worker seed test test.proof lint fmt docker.api docker.worker docker.web docker.migrate docker.all kind.validate kind.down
 
 db.up:
 	docker compose up -d db
@@ -20,6 +20,11 @@ api:
 
 worker:
 	go run ./cmd/worker
+
+# P15: provisions the fixed demo org + viewer account the "Live demo" button
+# signs visitors into (internal/demo). Idempotent; safe to re-run.
+seed:
+	go run ./cmd/seed
 
 test:
 	go test ./...

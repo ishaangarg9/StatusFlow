@@ -308,6 +308,34 @@ holds. Grafana rides the pre-wired `grafana.<domain>` tunnel host (gate behind
 Cloudflare Access). Go side: `go vet`/`staticcheck`/tests green + `/metrics`
 exposition proven; charts `helm template`-verified (0 inline Secrets bar the charts'
 own managed ones). See `deploy/observability/README.md`. Remaining: P15/P16.
+**P15 (Demo experience + abuse hardening) ✅** — a seed job + a "Live demo"
+button, both scoped so the only thing enforcing what a visitor can't do is the
+**existing** authz matrix, not new trust logic. `cmd/seed` provisions a fixed
+demo org (`internal/demo`: a stable UUID so re-runs look the org up under RLS
+instead of a privileged cross-org query) with a seed-owner account, 3 monitors
+against real public URLs (no fabricated history — the real worker/incident
+pipeline drives the demo), a public status page, and a **viewer-only** demo
+account. `POST /api/auth/demo-login` signs visitors into that account —
+no password, gated by `DEMO_MODE_ENABLED` (off by default, all-or-nothing like
+Stripe), 404 alike whether disabled or unseeded. Abuse hardening: the route has
+its **own** rate limit (`RATE_LIMIT_DEMO_PER_MIN`, separate from login/signup —
+demo-login skips the password check entirely, so it's cheaper to spam) and the
+minted session uses a short, independent `DEMO_SESSION_TTL_MINUTES` (default
+60) instead of the normal `SESSION_TTL_DAYS`, both new `auth.SessionStore`
+methods (`CreateWithTTL`/`SetCookieWithTTL`). Concurrent demo visitors are
+allowed on purpose (no revoke-on-login, which would let one visitor silently
+kick another out) — the short TTL is what bounds live-session accumulation.
+No periodic reset CronJob: there's nothing to reset — the account can't write
+(viewer role), `check_results` growth is already covered by Phase 6's
+`prune_check_results`, and sessions age out on their own. Proven by
+`test/sessions/demo_login_test.go` (disabled→404, unseeded→404, enabled+seeded
+mints a session for the right user with the *demo* TTL, not the store's
+normal one) plus manual end-to-end verification (seed → demo-login → browser
+click-through of the dashboard/incidents/members/public status page as the
+viewer, confirming both the UI hides write controls and the API 403s a raw
+write attempt). Chart wiring (`deploy/charts/statusflow/values.yaml` +
+`configmap.yaml`) defaults `demo.enabled: false` so no deployed environment
+turns this on by accident. Remaining: P16.
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 
