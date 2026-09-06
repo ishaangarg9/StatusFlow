@@ -55,6 +55,9 @@ export function makeApi(f: ApiFetch) {
       f<{ user: Me["user"] }>("POST", "/auth/signup", body),
     login: (body: { email: string; password: string }) =>
       f<{ user: Me["user"] }>("POST", "/auth/login", body),
+    // 404 when P15 demo mode isn't enabled server-side — callers should
+    // treat that the same as "button shouldn't have been clickable".
+    demoLogin: () => f<{ user: Me["user"] }>("POST", "/auth/demo-login"),
     logout: () => f<void>("POST", "/auth/logout"),
     logoutAll: () => f<void>("POST", "/auth/logout-all"),
     listSessions: () =>

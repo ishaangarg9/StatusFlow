@@ -40,6 +40,10 @@ type Config struct {
 
 	RateLimitLoginPerMin  int
 	RateLimitAcceptPerMin int
+	// RateLimitDemoPerMin guards POST /api/auth/demo-login separately from
+	// login/signup: it never runs a password check, so it's cheaper to spam
+	// than real login and deserves its own, independently tunable cap.
+	RateLimitDemoPerMin int
 
 	// TrustedProxies is the set of CIDRs/IPs whose X-Forwarded-For header we
 	// trust for deriving the real client IP (rate-limit keying). In the prod
@@ -57,6 +61,17 @@ type Config struct {
 	StripeSecretKey     string
 	StripeWebhookSecret string
 	StripePriceID       string
+
+	// DemoEnabled turns on POST /api/auth/demo-login, a password-less
+	// shortcut into the fixed, viewer-only account internal/demo defines. Off
+	// by default; the seed job (cmd/seed) still needs to have run to create
+	// the account regardless of this flag.
+	DemoEnabled bool
+	// DemoSessionTTL bounds how long a demo-login session lives — deliberately
+	// much shorter than SessionTTL, since the account is shared and disposable.
+	// A short TTL naturally caps how many live sessions can accumulate without
+	// needing a cleanup job: rows just age out.
+	DemoSessionTTL time.Duration
 }
 
 func LoadConfig() (*Config, error) {
@@ -118,10 +133,13 @@ func LoadConfig() (*Config, error) {
 		IncidentResolveThreshold: optInt("INCIDENT_RESOLVE_THRESHOLD", 2),
 		RateLimitLoginPerMin:     optInt("RATE_LIMIT_LOGIN_PER_MIN", 10),
 		RateLimitAcceptPerMin:    optInt("RATE_LIMIT_ACCEPT_PER_MIN", 20),
+		RateLimitDemoPerMin:      optInt("RATE_LIMIT_DEMO_PER_MIN", 20),
 		TrustedProxies:           parseTrustedProxies(opt("TRUSTED_PROXIES", ""), &errs),
 		StripeSecretKey:          strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
 		StripeWebhookSecret:      strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
 		StripePriceID:            strings.TrimSpace(os.Getenv("STRIPE_PRICE_ID")),
+		DemoEnabled:              optBool("DEMO_MODE_ENABLED", false),
+		DemoSessionTTL:           time.Duration(optInt("DEMO_SESSION_TTL_MINUTES", 60)) * time.Minute,
 	}
 
 	// Fail fast on a half-configured transport: a Resend key with no From would

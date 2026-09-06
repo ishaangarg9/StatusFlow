@@ -20,6 +20,9 @@ data:
   INCIDENT_RESOLVE_THRESHOLD: {{ .Values.config.incident.resolveThreshold | quote }}
   RATE_LIMIT_LOGIN_PER_MIN: {{ .Values.config.rateLimit.loginPerMin | quote }}
   RATE_LIMIT_ACCEPT_PER_MIN: {{ .Values.config.rateLimit.acceptPerMin | quote }}
+  RATE_LIMIT_DEMO_PER_MIN: {{ .Values.config.rateLimit.demoPerMin | quote }}
+  DEMO_MODE_ENABLED: {{ .Values.config.demo.enabled | quote }}
+  DEMO_SESSION_TTL_MINUTES: {{ .Values.config.demo.sessionTTLMinutes | quote }}
   {{- with .Values.config.trustedProxies }}
   TRUSTED_PROXIES: {{ . | quote }}
   {{- end }}
