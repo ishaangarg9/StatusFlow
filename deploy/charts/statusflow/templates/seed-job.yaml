@@ -31,6 +31,23 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Same wait the migration Job has. Besides riding out a cold Postgres it
+      # covers a NetworkPolicy race: k3s's kube-router programs the allow rule
+      # for a brand-new pod a moment after it starts, so a client that dials
+      # immediately (cmd/seed pings once and exits) gets "connection refused".
+      initContainers:
+        - name: wait-for-postgres
+          image: "postgres:16"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Values.db.host }} -p {{ .Values.db.port }}; do
+                echo "waiting for postgres at {{ .Values.db.host }}:{{ .Values.db.port }}"; sleep 2;
+              done
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
       containers:
         - name: seed
           image: {{ include "sf.image" (dict "root" . "img" .Values.images.api) | quote }}

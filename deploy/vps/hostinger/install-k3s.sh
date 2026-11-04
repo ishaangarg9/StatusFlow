@@ -59,6 +59,17 @@ spec:
       websecure:
         expose:
           default: false
+    # Argo CD only calls an Ingress Healthy once status.loadBalancer has an
+    # address. With servicelb off and a ClusterIP Service there's nothing for
+    # publishedService to copy, so every Ingress stays Progressing and Argo
+    # syncs hang on "waiting for healthy state of Ingress" (PostSync hooks never
+    # run). Publish the private address Caddy actually dials instead.
+    providers:
+      kubernetesIngress:
+        publishedService:
+          enabled: false
+        ingressEndpoint:
+          ip: ${TRAEFIK_BIND_IP}
     # Traefik chart >= 40 also renders hostIP into the entrypoint's listen
     # address (--entryPoints.web.address=<hostIP>:8000), which doesn't exist
     # inside the pod and crash-loops it ("cannot assign requested address").
