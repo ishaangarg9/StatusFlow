@@ -15,10 +15,10 @@ images:
   # the tags by hand except to roll back (revert the bump commit instead).
   registry: ghcr.io/ishaangarg9
   pullPolicy: IfNotPresent
-  api: {repository: statusflow-api, tag: sha-c473eec3f3c2}
-  worker: {repository: statusflow-worker, tag: sha-c473eec3f3c2}
-  web: {repository: statusflow-web, tag: sha-c473eec3f3c2}
-  migrate: {repository: statusflow-migrate, tag: sha-c473eec3f3c2}
+  api: {repository: statusflow-api, tag: sha-d95f5ac7722b}
+  worker: {repository: statusflow-worker, tag: sha-d95f5ac7722b}
+  web: {repository: statusflow-web, tag: sha-d95f5ac7722b}
+  migrate: {repository: statusflow-migrate, tag: sha-d95f5ac7722b}
 
 # --- DB wiring: app_user DSN from a Sealed Secret (NOT assembled inline) -----
 db:
