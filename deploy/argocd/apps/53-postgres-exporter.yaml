@@ -3,7 +3,6 @@
 # app_user (invariant §2 holds — NO new/privileged DB role); DSN from the sealed
 # postgres-exporter-dsn secret. Multi-source: pinned chart + this repo's values.
 # Optional: if you drop this app, the PostgresDown rule simply never fires.
-# Replace <you>.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -22,7 +21,7 @@ spec:
       helm:
         valueFiles:
           - $values/deploy/observability/values-postgres-exporter.yaml
-    - repoURL: https://github.com/<you>/SaaS.git
+    - repoURL: https://github.com/ishaangarg9/StatusFlow.git
       targetRevision: main
       ref: values
   destination:

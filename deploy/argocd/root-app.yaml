@@ -3,8 +3,8 @@
 # there (Postgres, StatusFlow, sealed-secret resources, cloudflared). Add a new
 # platform component by committing a new file under apps/ — no kubectl needed.
 #
-# Replace <you> and pin targetRevision to a branch/tag you trust (a tag or a SHA
-# is the more honest GitOps source of truth than a moving `main`).
+# targetRevision tracks `main`: .github/workflows/images.yml commits the image
+# tag bump there after CI passes, which is what rolls a release out.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,13 +15,19 @@ metadata:
 spec:
   project: statusflow
   source:
-    repoURL: https://github.com/<you>/SaaS.git
+    repoURL: https://github.com/ishaangarg9/StatusFlow.git
     targetRevision: main
     path: deploy/argocd/apps
     directory:
       recurse: false
-      # Only the child Application manifests live directly under apps/.
-      include: "*.yaml"
+      # Only the child Application manifests live directly under apps/. The live
+      # box (shared 8 GiB Hostinger VPS, Caddy edge) runs the app tier only:
+      # 10 secrets, 20 postgres, 30 statusflow. 40 (cloudflared) is the Tunnel
+      # edge, unused behind Caddy; 50-54 (observability) don't fit the RAM
+      # budget alongside n8n. To enable them later widen this glob, e.g.
+      # "{10,20,30,5?}-*.yaml" — a removed app is pruned by Argo, so narrowing
+      # it again tears the stack down cleanly.
+      include: "{10,20,30}-*.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

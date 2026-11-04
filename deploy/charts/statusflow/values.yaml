@@ -168,6 +168,17 @@ migrate:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {memory: 128Mi}
 
+# --- Demo seed Job (P15) ----------------------------------------------------
+# Post-install/post-upgrade hook running cmd/seed (shipped in the api image) as
+# app_user. Idempotent. Off by default; turn on with config.demo.enabled.
+seed:
+  enabled: false
+  backoffLimit: 3
+  # argon2id DefaultParams hash with 64 MiB per call; leave room for the runtime.
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 256Mi}
+
 # --- Ingress (Traefik on k3s/kind) -----------------------------------------
 ingress:
   enabled: true

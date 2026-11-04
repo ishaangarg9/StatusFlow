@@ -63,3 +63,12 @@ podSecurityContext:
   fsGroup: 999
   runAsUser: 999
   runAsGroup: 999
+
+# Nightly pg_dump CronJob to a hostPath (single-node k3s). Off by default; the
+# prod values turn it on. Runs as the superuser (see the template for why) on a
+# short-lived Job only. The host dir must exist and be owned by uid 999.
+backup:
+  enabled: false
+  schedule: "30 3 * * *"
+  hostPath: /opt/statusflow/backups
+  retentionDays: 14

@@ -1,7 +1,6 @@
 # Wave 2: Loki (single-binary log store). Grafana reads it via the Loki
 # datasource wired in values-kube-prometheus-stack.yaml; promtail (app 52) feeds
 # it. Multi-source: pinned grafana chart + this repo's values via $values.
-# Replace <you>.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -20,7 +19,7 @@ spec:
       helm:
         valueFiles:
           - $values/deploy/observability/values-loki.yaml
-    - repoURL: https://github.com/<you>/SaaS.git
+    - repoURL: https://github.com/ishaangarg9/StatusFlow.git
       targetRevision: main
       ref: values
   destination:

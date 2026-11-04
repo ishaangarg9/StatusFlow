@@ -1,4 +1,5 @@
-# StatusFlow P12 — production overrides for the postgres chart (k3s on the VPS).
+# StatusFlow — production overrides for the postgres chart (k3s on the VPS).
+# Argo CD applies this with releaseName "pg" (deploy/argocd/apps/20-postgres.yaml).
 #   helm install pg ./deploy/charts/postgres -n statusflow -f deploy/prod/values-postgres.yaml
 # Release name "pg" => Service "pg-postgres" (matches values-statusflow.yaml db.host).
 
@@ -10,13 +11,22 @@ auth:
 persistence:
   enabled: true
   size: 20Gi
-  # k3s default StorageClass; setup-postgres-volume.sh backs it with the Hetzner
-  # Volume so the DB survives a box rebuild.
+  # k3s default StorageClass. On the Hostinger box this is the root disk (no
+  # separate volume), which is why the nightly backup below is not optional.
   storageClass: local-path
 
 resources:
   requests:
-    cpu: 250m
-    memory: 512Mi
+    cpu: 100m
+    memory: 256Mi
   limits:
     memory: 1Gi
+
+# Nightly logical backup to the host (prep-host.sh creates the dir). Copy it
+# off-box (R2/B2) for a real backup — a dump on the same disk survives a bad
+# migration or a dropped table, not a dead disk.
+backup:
+  enabled: true
+  schedule: "30 3 * * *"
+  hostPath: /opt/statusflow/backups
+  retentionDays: 14

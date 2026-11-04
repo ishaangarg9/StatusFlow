@@ -75,6 +75,14 @@ else
 fi
 
 # --- P14 observability (monitoring namespace) ------------------------------
+# WITH_OBSERVABILITY=0 skips these (the shared Hostinger box doesn't run the
+# stack, and a SealedSecret for a namespace that doesn't exist would leave the
+# Argo `secrets` app degraded).
+if [[ "${WITH_OBSERVABILITY:-1}" != "1" ]]; then
+  echo "  (skipping monitoring secrets: WITH_OBSERVABILITY=0)"
+  echo ">> done. Commit ./sealed/*.yaml (encrypted). NEVER commit secrets.env."
+  exit 0
+fi
 MON="${MON:-monitoring}"
 
 # Grafana admin login.

@@ -1,6 +1,5 @@
 # Wave 2: promtail (DaemonSet) — tails pod logs on each node and ships them to
 # Loki. Multi-source: pinned grafana chart + this repo's values via $values.
-# Replace <you>.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,7 +18,7 @@ spec:
       helm:
         valueFiles:
           - $values/deploy/observability/values-promtail.yaml
-    - repoURL: https://github.com/<you>/SaaS.git
+    - repoURL: https://github.com/ishaangarg9/StatusFlow.git
       targetRevision: main
       ref: values
   destination:

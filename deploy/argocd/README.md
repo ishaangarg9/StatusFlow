@@ -63,18 +63,18 @@ before it can. Do these once, by hand (they're in `deploy/vps/README.md` §3):
    same `kubectl apply -f sealed/` as the rest.
 3. **Images** on the node (registry or `k3s ctr images import`), tags set in
    `deploy/prod/values-statusflow.yaml`.
-4. The **repo is pushed** to `https://github.com/<you>/SaaS.git` and reachable by
+4. The **repo is pushed** to `https://github.com/ishaangarg9/StatusFlow.git` and reachable by
    Argo (public = nothing to do; private = `argocd repo add` with a PAT).
 
 ## Bootstrap
 
-Replace `<you>` (repo owner) in `project.yaml`, `root-app.yaml`, and every
-`apps/*.yaml`, and `<domain>` in `config/ingress.yaml`. Then on the box
-(KUBECONFIG → k3s):
+The manifests already point at `https://github.com/ishaangarg9/StatusFlow.git`.
+The UI is not published by default (pass `ARGOCD_HOST=argocd.<domain>` to
+`install.sh` to apply `config/ingress.yaml`). Then on the box (KUBECONFIG → k3s):
 
 ```bash
 cd deploy/argocd
-./install.sh                       # installs Argo CD, applies its params + ingress
+./install.sh                       # installs Argo CD (pinned), applies its params, trims unused parts
 
 # hand the platform to Git — applied ONCE, never again:
 kubectl apply -f project.yaml
