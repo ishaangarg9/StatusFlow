@@ -60,7 +60,7 @@ internet ──443──> Caddy (Docker, auto-HTTPS)
 scp -r deploy/vps/hostinger root@201.18.199.154:/root/statusflow-host
 ssh root@201.18.199.154
 cd /root/statusflow-host
-bash prep-host.sh        # swap, sysctl, ufw route rules for pods, backup dir
+bash prep-host.sh        # swap, sysctl, ufw route rules, backup dir, AppArmor profile
 bash install-k3s.sh      # k3s, servicelb off, Traefik on 172.17.0.1:8080 only
 ```
 
@@ -189,6 +189,13 @@ via `rclone` in a host cron) is the follow-up.
 | **Headroom** of 7.7 GiB (+4 GiB swap) | **~4 GiB** |
 
 ## Known trade-offs
+
+- **AppArmor on Ubuntu 26.04.** Every k3s container gets the stacked label
+  `cri-containerd.apparmor.d//&unconfined`, which containerd's default profile
+  won't let signal itself. Single-process pods don't notice; Postgres crash-loops
+  ("could not signal for checkpoint: Permission denied"). Postgres therefore
+  runs under `apparmor/statusflow-default` (the default profile + the
+  stacked-peer rule, still enforcing). Drop it once k3s/containerd ship a fix.
 
 - **Origin IP is public** (it already was, via Caddy). No WAF/DDoS layer in front
   of `statusflow.usefulmachines.tech`; `ishaangarg9.com` can gain one by turning

@@ -22,6 +22,8 @@
 #      22/80/443 only. The k8s API (6443) and Traefik's port are NOT opened.
 #   4. /opt/statusflow/backups owned by the Postgres uid (999), for the nightly
 #      pg_dump CronJob (deploy/charts/postgres backup.*).
+#   5. The `statusflow-default` AppArmor profile (apparmor/), which Postgres
+#      needs on Ubuntu 26.04 — see the comment at the top of that file.
 set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
@@ -68,6 +70,11 @@ ufw reload
 
 echo ">> backup dir"
 install -d -m 0700 -o 999 -g 999 "$BACKUP_DIR"
+
+echo ">> AppArmor profile statusflow-default"
+# /etc/apparmor.d is loaded at boot by apparmor.service, so this survives reboots.
+install -m 0644 "$(dirname "$0")/apparmor/statusflow-default" /etc/apparmor.d/statusflow-default
+apparmor_parser -r -W /etc/apparmor.d/statusflow-default
 
 echo
 echo "Done. ufw now:"

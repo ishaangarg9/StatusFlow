@@ -30,3 +30,16 @@ backup:
   schedule: "30 3 * * *"
   hostPath: /opt/statusflow/backups
   retentionDays: 14
+
+# Ubuntu 26.04 + k3s gives every container the stacked AppArmor label
+# `cri-containerd.apparmor.d//&unconfined`, which containerd's default profile
+# won't let signal itself — Postgres' startup process then dies with "could not
+# signal for checkpoint: Permission denied" and the pod crash-loops. Use the
+# host profile from deploy/vps/hostinger/apparmor/ (containerd's default + the
+# stacked-peer signal rule; still enforcing). Merged into the chart's
+# podSecurityContext, so it covers the StatefulSet and the backup Job. The
+# profile must be loaded on the node (prep-host.sh) or the pod won't start.
+podSecurityContext:
+  appArmorProfile:
+    type: Localhost
+    localhostProfile: statusflow-default
