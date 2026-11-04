@@ -35,6 +35,9 @@ spec:
       # covers a NetworkPolicy race: k3s's kube-router programs the allow rule
       # for a brand-new pod a moment after it starts, so a client that dials
       # immediately (cmd/seed pings once and exits) gets "connection refused".
+      # -U is required: without it pg_isready looks up the container's uid in
+      # /etc/passwd, finds nothing for a non-root uid, and never even dials
+      # ("no attempt"). It only names the role in the probe; no auth happens.
       initContainers:
         - name: wait-for-postgres
           image: "postgres:16"
@@ -43,7 +46,7 @@ spec:
             - sh
             - -c
             - |
-              until pg_isready -h {{ .Values.db.host }} -p {{ .Values.db.port }}; do
+              until pg_isready -h {{ .Values.db.host }} -p {{ .Values.db.port }} -U {{ .Values.db.appUser }}; do
                 echo "waiting for postgres at {{ .Values.db.host }}:{{ .Values.db.port }}"; sleep 2;
               done
           securityContext:
