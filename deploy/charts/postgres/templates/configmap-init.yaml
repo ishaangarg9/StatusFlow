@@ -10,6 +10,13 @@ data:
   # privileged migration role and the schema itself is built by the migration
   # Job. Migration 001's `CREATE ROLE app_user … IF NOT EXISTS` then no-ops, so
   # the real password set here wins over the migration's dev default.
+  #
+  # psql does NOT interpolate :'vars' inside a dollar-quoted DO $$…$$ body, so
+  # the conditional CREATE is built as a SELECT and run with \gexec (variables
+  # stay outside any quoting). An earlier DO-block version failed with a syntax
+  # error; the entrypoint then skipped init on restart and migration 001 created
+  # app_user with its well-known dev password. The ALTER below makes the sealed
+  # password authoritative even if the role somehow already exists.
   10-app-user.sh: |
     #!/bin/sh
     set -e
@@ -18,13 +25,10 @@ data:
       --set=app_user="$APP_USER" \
       --set=app_password="$APP_USER_PASSWORD" \
       --set=app_db="$POSTGRES_DB" <<'EOSQL'
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') THEN
-        EXECUTE format(
-          'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT',
-          :'app_user', :'app_password');
-      END IF;
-    END $$;
+    SELECT format(
+      'CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT',
+      :'app_user')
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') \gexec
+    ALTER ROLE :"app_user" WITH LOGIN PASSWORD :'app_password';
     GRANT CONNECT ON DATABASE :"app_db" TO :"app_user";
     EOSQL
