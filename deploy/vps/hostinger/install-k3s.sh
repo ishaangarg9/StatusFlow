@@ -59,6 +59,20 @@ spec:
       websecure:
         expose:
           default: false
+    # Traefik chart >= 40 also renders hostIP into the entrypoint's listen
+    # address (--entryPoints.web.address=<hostIP>:8000), which doesn't exist
+    # inside the pod and crash-loops it ("cannot assign requested address").
+    # additionalArguments render after the generated ones and win, so the pod
+    # listens on :8000 while the hostPort mapping above stays bound to hostIP.
+    additionalArguments:
+      - "--entryPoints.web.address=:8000/tcp"
+    # One node + a hostPort: a surge pod can't schedule while the old one holds
+    # the port, so the default rolling update deadlocks. Replace in place.
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 0
 EOF
 
 curl -sfL https://get.k3s.io | \
