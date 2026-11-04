@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { qk } from "@/lib/query-keys";
+import type { Monitor } from "@/lib/types";
 import { Can } from "@/components/can";
 import { ListError } from "@/components/list-error";
 import { StatusBadge } from "@/components/status-badge";
@@ -66,12 +67,12 @@ export function MonitorsList({ orgId }: { orgId: string }) {
                   <TableHead>URL</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead>Interval</TableHead>
-                  <TableHead>State</TableHead>
+                  <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {monitors.map((m) => (
-                  <TableRow key={m.id} className="cursor-pointer">
+                  <TableRow key={m.id}>
                     <TableCell className="font-medium">
                       <Link
                         href={`/orgs/${orgId}/monitors/${m.id}`}
@@ -86,7 +87,7 @@ export function MonitorsList({ orgId }: { orgId: string }) {
                     <TableCell>{m.method}</TableCell>
                     <TableCell>{m.intervalSeconds}s</TableCell>
                     <TableCell>
-                      <StatusBadge status={m.isPaused ? "paused" : "operational"} />
+                      <MonitorState orgId={orgId} monitor={m} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -99,6 +100,22 @@ export function MonitorsList({ orgId }: { orgId: string }) {
       </Card>
     </div>
   );
+}
+
+// The monitor list carries no check result, so each row reads its own latest
+// check. A paused monitor says so; one the worker hasn't reached yet is
+// "pending" rather than a guessed "operational".
+function MonitorState({ orgId, monitor }: { orgId: string; monitor: Monitor }) {
+  const { data: checks, isLoading } = useQuery({
+    queryKey: qk.latestCheck(orgId, monitor.id),
+    queryFn: () => api.listChecks(orgId, monitor.id, 1),
+    refetchInterval: 15000,
+    enabled: !monitor.isPaused,
+  });
+
+  if (monitor.isPaused) return <StatusBadge status="paused" />;
+  if (isLoading) return <Skeleton className="h-5 w-14 rounded-full" />;
+  return <StatusBadge status={checks?.[0]?.status ?? "pending"} />;
 }
 
 function EmptyState({ orgId }: { orgId: string }) {

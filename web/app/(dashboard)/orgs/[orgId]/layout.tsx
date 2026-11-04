@@ -24,8 +24,10 @@ export default async function OrgLayout({
 
   return (
     <RoleProvider role={membership.role}>
-      <OrgNav orgId={orgId} />
-      <main className="min-w-0 flex-1">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col md:flex-row">
+        <OrgNav orgId={orgId} />
+        <main className="min-w-0 flex-1">{children}</main>
+      </div>
     </RoleProvider>
   );
 }

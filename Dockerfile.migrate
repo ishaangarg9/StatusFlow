@@ -10,7 +10,7 @@
 #
 # Pinned to the same golang-migrate the Makefile/local dev use.
 
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26
 ARG MIGRATE_VERSION=v4.18.1
 FROM golang:${GO_VERSION}-bookworm AS build
 ARG MIGRATE_VERSION

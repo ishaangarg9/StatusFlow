@@ -35,9 +35,6 @@ export default function Home() {
         </span>
         <nav className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm">
-            <Link href="/pricing">Pricing</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm">
             <Link href="/login">Sign in</Link>
           </Button>
           <Button asChild size="sm">
@@ -61,7 +58,7 @@ export default function Home() {
               <Link href="/signup">Create your account</Link>
             </Button>
             <Button asChild size="lg" variant="outline">
-              <Link href="/status/demo">See an example status page</Link>
+              <Link href="/status/statusflow-demo">See an example status page</Link>
             </Button>
           </div>
         </section>

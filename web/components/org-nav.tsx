@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
-  CreditCard,
   FileText,
   Gauge,
   ScrollText,
@@ -22,7 +21,6 @@ export function OrgNav({ orgId }: { orgId: string }) {
   const pathname = usePathname();
   const base = `/orgs/${orgId}`;
   const canAudit = useCan("audit:read");
-  const canBilling = useCan("billing:read");
 
   const items = [
     { href: base, label: "Overview", icon: Gauge, exact: true },
@@ -33,34 +31,39 @@ export function OrgNav({ orgId }: { orgId: string }) {
     ...(canAudit
       ? [{ href: `${base}/audit`, label: "Audit log", icon: ScrollText }]
       : []),
-    ...(canBilling
-      ? [{ href: `${base}/billing`, label: "Billing", icon: CreditCard }]
-      : []),
     { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];
 
+  const links = items.map(({ href, label, icon: Icon, exact }) => {
+    const active = exact ? pathname === href : pathname.startsWith(href);
+    return (
+      <Link
+        key={href}
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+          active
+            ? "bg-primary text-primary-foreground"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        )}
+      >
+        <Icon className="h-4 w-4" />
+        {label}
+      </Link>
+    );
+  });
+
+  // Desktop: fixed sidebar. Mobile: the same links as a horizontally
+  // scrollable bar above the content, so every section stays reachable.
   return (
-    <aside className="hidden w-56 shrink-0 border-r bg-sidebar p-3 md:block">
-      <nav className="space-y-1">
-        {items.map(({ href, label, icon: Icon, exact }) => {
-          const active = exact ? pathname === href : pathname.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                active
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </Link>
-          );
-        })}
+    <>
+      <aside className="hidden w-56 shrink-0 border-r bg-sidebar p-3 md:block">
+        <nav className="space-y-1">{links}</nav>
+      </aside>
+      <nav className="flex gap-1 overflow-x-auto border-b bg-sidebar px-3 py-2 md:hidden">
+        {links}
       </nav>
-    </aside>
+    </>
   );
 }

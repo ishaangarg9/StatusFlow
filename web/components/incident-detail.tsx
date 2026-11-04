@@ -10,6 +10,7 @@ import { qk } from "@/lib/query-keys";
 import { formatDateTime } from "@/lib/utils";
 import type { IncidentUpdateStatus } from "@/lib/types";
 import { Can } from "@/components/can";
+import { DetailError } from "@/components/list-error";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -47,7 +48,7 @@ export function IncidentDetail({
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<IncidentUpdateStatus>("investigating");
 
-  const { data: incident, isLoading } = useQuery({
+  const { data: incident, isLoading, error, refetch } = useQuery({
     queryKey: qk.incident(orgId, incidentId),
     queryFn: () => api.getIncident(orgId, incidentId),
     refetchInterval: 15000,
@@ -79,8 +80,16 @@ export function IncidentDetail({
     onError: (e) => toast.error(errorMessage(e)),
   });
 
-  if (isLoading || !incident) {
-    return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (!incident) {
+    return (
+      <DetailError
+        error={error}
+        noun="Incident"
+        onRetry={refetch}
+        back={{ href: `/orgs/${orgId}/incidents`, label: "Back to incidents" }}
+      />
+    );
   }
 
   const isOpen = incident.status === "open";

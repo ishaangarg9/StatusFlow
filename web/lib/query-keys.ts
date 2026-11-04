@@ -12,6 +12,8 @@ export const qk = {
   monitors: (orgId: string) => ["monitors", orgId] as const,
   monitor: (orgId: string, id: string) => ["monitor", orgId, id] as const,
   checks: (orgId: string, id: string) => ["checks", orgId, id] as const,
+  latestCheck: (orgId: string, id: string) =>
+    ["checks", orgId, id, "latest"] as const,
 
   incidents: (orgId: string) => ["incidents", orgId] as const,
   incident: (orgId: string, id: string) => ["incident", orgId, id] as const,
@@ -21,5 +23,4 @@ export const qk = {
   audit: (orgId: string, filters?: { action?: string; actor?: string }) =>
     ["audit", orgId, filters ?? {}] as const,
 
-  subscription: (orgId: string) => ["subscription", orgId] as const,
 };

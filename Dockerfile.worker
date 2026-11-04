@@ -5,7 +5,7 @@
 # these are wired as httpGet probes (see the Helm chart, P11); distroless has no
 # shell, so there is intentionally no Docker HEALTHCHECK.
 
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 
