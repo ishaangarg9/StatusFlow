@@ -1,0 +1,21 @@
+# StatusFlow site blocks for the box's existing Dockerised Caddy
+# (/opt/useful-machines/Caddyfile). Append these blocks to that Caddyfile, then
+#   cd /opt/useful-machines && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+# Caddy terminates TLS (automatic Let's Encrypt) and proxies plain http to
+# Traefik's private hostPort on the docker0 bridge (deploy/vps/hostinger/
+# install-k3s.sh). Traefik routes by Host to the web (BFF) Service.
+#
+# Canonical host. Caddy sets X-Forwarded-For/-Proto/-Host and preserves Host,
+# which the BFF's origin check (web.appOrigin) and Traefik's Ingress rule need.
+statusflow.ishaangarg9.com {
+	encode zstd gzip
+	reverse_proxy 172.17.0.1:8080
+}
+
+# Secondary domain: a permanent redirect to the canonical origin. The app only
+# ever knows ONE origin (cookie host, CSRF allow-list, invite/Stripe links), so
+# this host never reaches it.
+statusflow.usefulmachines.tech {
+	redir https://statusflow.ishaangarg9.com{uri} permanent
+}

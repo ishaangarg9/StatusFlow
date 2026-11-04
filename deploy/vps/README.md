@@ -7,6 +7,10 @@ ports), with every secret **sealed in Git**. The isolation invariants (CLAUDE.md
 get only `app_user`, the worker egress NetworkPolicy holds, the cookie is
 `Secure`, and only the BFF (+ the Stripe webhook) is on the ingress.
 
+> **Live target is different:** the running deployment is on a *shared*
+> Hostinger box behind its existing Caddy — see [`hostinger/README.md`](hostinger/README.md).
+> This file stays as the dedicated-box / Cloudflare-Tunnel variant.
+
 This directory holds the **host** scripts; the edge lives in `deploy/cloudflared/`,
 secrets in `deploy/sealed-secrets/`, and prod chart overrides in `deploy/prod/`.
 

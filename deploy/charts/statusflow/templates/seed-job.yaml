@@ -1,0 +1,55 @@
+{{- if .Values.seed.enabled }}
+# Demo seed Job (P15). Provisions internal/demo's fixed org, the seed-owner and
+# viewer-only demo accounts, three monitors and a public status page. Runs as a
+# post-install/post-upgrade hook (Argo CD: PostSync) so the schema is migrated
+# and the config/secrets exist. cmd/seed is idempotent, so re-running it on
+# every sync is a no-op once seeded.
+#
+# Connects as app_user (NOT the privileged role): every write goes through the
+# normal service layer + tenancy.WithOrgTx, RLS armed, exactly like a request.
+# The seed binary ships in the api image (Dockerfile.api), so no extra image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sf.fullname" . }}-seed
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.seed.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "sf.labels" . | nindent 8 }}
+        app.kubernetes.io/component: seed
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: seed
+          image: {{ include "sf.image" (dict "root" . "img" .Values.images.api) | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["/usr/local/bin/seed"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "sf.fullname" . }}-config
+            - secretRef:
+                name: {{ include "sf.appSecretName" . }}
+          env:
+            # app_user DSN only — same Secret the api/worker use.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sf.dbSecretName" . }}
+                  key: DATABASE_URL
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.seed.resources | nindent 12 }}
+{{- end }}

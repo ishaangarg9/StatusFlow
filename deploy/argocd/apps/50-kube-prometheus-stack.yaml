@@ -8,7 +8,7 @@
 # is referenced via $values. Both source repos are allow-listed in project.yaml.
 #
 # The `monitoring` namespace is a day-0 bootstrap (CreateNamespace=false) — apply
-# deploy/observability/namespace.yaml once before this syncs. Replace <you>.
+# deploy/observability/namespace.yaml once before this syncs.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -27,7 +27,7 @@ spec:
       helm:
         valueFiles:
           - $values/deploy/observability/values-kube-prometheus-stack.yaml
-    - repoURL: https://github.com/<you>/SaaS.git
+    - repoURL: https://github.com/ishaangarg9/StatusFlow.git
       targetRevision: main
       ref: values
   destination:

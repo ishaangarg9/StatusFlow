@@ -5,7 +5,7 @@
 #
 # Wave 3 so it syncs AFTER kube-prometheus-stack (wave 2) — its ServiceMonitor /
 # PrometheusRule kinds are CRDs the stack installs, so they must exist first. The
-# retry rides out the brief CRD-registration race. Replace <you>.
+# retry rides out the brief CRD-registration race.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,7 +18,7 @@ metadata:
 spec:
   project: statusflow
   source:
-    repoURL: https://github.com/<you>/SaaS.git
+    repoURL: https://github.com/ishaangarg9/StatusFlow.git
     targetRevision: main
     path: deploy/observability/manifests
     directory:

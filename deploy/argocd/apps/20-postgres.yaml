@@ -2,7 +2,6 @@
 # (statusflow-pg-auth) so it can read the role passwords, and before StatusFlow
 # so the migration Job has a database to hit.
 #
-# Replace <you>.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,10 +14,15 @@ metadata:
 spec:
   project: statusflow
   source:
-    repoURL: https://github.com/<you>/SaaS.git
+    repoURL: https://github.com/ishaangarg9/StatusFlow.git
     targetRevision: main
     path: deploy/charts/postgres
     helm:
+      # Argo defaults the Helm release name to the Application name ("postgres"),
+      # which would name the Service "postgres-postgres". Every DSN (seal.sh,
+      # values-statusflow.yaml db.host) targets "pg-postgres", the name the P12
+      # `helm install pg` runbook used — so pin it.
+      releaseName: pg
       # The prod overrides live outside the chart dir but inside the repo, which
       # Argo allows. Same file the P12 runbook passes to `helm install`.
       valueFiles:

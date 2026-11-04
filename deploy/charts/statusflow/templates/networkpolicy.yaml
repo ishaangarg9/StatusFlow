@@ -190,4 +190,29 @@ spec:
       ports:
         - port: 5432
 {{- end }}
+{{- if .Values.seed.enabled }}
+---
+# --- seed : egress to DB only -----------------------------------------------
+# Same reason as migrate: allow-dns selects the seed Job (part-of=statusflow)
+# for Egress, flipping it to default-deny, so it needs its own path to 5432.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sf.fullname" . }}-seed
+  labels:
+    {{- include "sf.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: seed
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: statusflow-postgres
+      ports:
+        - port: 5432
+{{- end }}
 {{- end }}

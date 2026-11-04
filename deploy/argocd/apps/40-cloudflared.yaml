@@ -3,7 +3,7 @@
 # The cloudflared-credentials Secret is delivered via the sealed-secrets app
 # (wave -1), so by the time this syncs the creds are present.
 #
-# Replace <you>. Fill <TUNNEL_ID>/<domain> in deploy/cloudflared/configmap.yaml.
+# Fill <TUNNEL_ID>/<domain> in deploy/cloudflared/configmap.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -16,7 +16,7 @@ metadata:
 spec:
   project: statusflow
   source:
-    repoURL: https://github.com/<you>/SaaS.git
+    repoURL: https://github.com/ishaangarg9/StatusFlow.git
     targetRevision: main
     path: deploy/cloudflared
     directory:

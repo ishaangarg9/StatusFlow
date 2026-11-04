@@ -2,8 +2,8 @@
 # everything in `default`) is the GitOps least-privilege story: Applications may
 # only pull from THIS repo and may only deploy into the namespaces we name.
 #
-# Replace <you> with your GitHub user/org. Keep this in lockstep with the repo
-# URL used by root-app.yaml and apps/*.yaml.
+# Keep sourceRepos in lockstep with the repo URL used by root-app.yaml and
+# apps/*.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -15,7 +15,7 @@ metadata:
 spec:
   description: StatusFlow SaaS + its platform addons (single-node k3s).
   sourceRepos:
-    - https://github.com/<you>/SaaS.git
+    - https://github.com/ishaangarg9/StatusFlow.git
     # P14 observability charts (kube-prometheus-stack, loki, promtail,
     # prometheus-postgres-exporter). Argo treats a Helm chart repo as a source.
     - https://prometheus-community.github.io/helm-charts

@@ -336,6 +336,17 @@ viewer, confirming both the UI hides write controls and the API 403s a raw
 write attempt). Chart wiring (`deploy/charts/statusflow/values.yaml` +
 `configmap.yaml`) defaults `demo.enabled: false` so no deployed environment
 turns this on by accident. Remaining: P16.
+**Live deploy target** — a *shared* Hostinger VPS (Ubuntu 26.04, 8 GiB) that also
+runs a Docker Compose stack (Caddy + n8n); runbook `deploy/vps/hostinger/README.md`.
+Edge is the box's existing **Caddy** (TLS) → Traefik hostPort bound to the private
+docker0 IP → web; `statusflow.ishaangarg9.com` is canonical, `statusflow.usefulmachines.tech`
+301s to it at Caddy (one app origin). Argo root app syncs only apps 10/20/30 (no
+tunnel, no observability). Images: `.github/workflows/images.yml` builds to GHCR
+after CI passes on main and commits the tag bump Argo syncs. Demo seed runs as an
+app_user PostSync Job (`seed.enabled`; binary in the api image). Nightly `pg_dump`
+CronJob (`backup.enabled`, postgres chart) runs as the superuser on a short-lived
+Job only — §2 intact. Fixed: Argo's postgres app now pins `releaseName: pg`
+(it defaulted to `postgres`, i.e. Service `postgres-postgres`, breaking every DSN).
 
 > Update this section as phases complete. Keep it honest about where the project actually is.
 

@@ -15,7 +15,7 @@ set -euo pipefail
 
 # controller + kubeseal client version (keep in lockstep). VERIFY this tag exists
 # first: https://github.com/bitnami-labs/sealed-secrets/releases
-SS_VERSION="${SS_VERSION:-v0.27.3}"
+SS_VERSION="${SS_VERSION:-v0.40.0}"
 
 echo ">> installing sealed-secrets controller $SS_VERSION into kube-system"
 kubectl apply -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/${SS_VERSION}/controller.yaml"

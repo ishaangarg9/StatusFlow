@@ -1,0 +1,119 @@
+{{- if .Values.backup.enabled }}
+{{- /*
+Nightly logical backup: pg_dump (custom format) of the app database to a host
+directory, keeping backup.retentionDays of dumps.
+
+Connects as the SUPERUSER, deliberately: app_user is NOBYPASSRLS and every
+tenant table is FORCE ROW LEVEL SECURITY, so pg_dump as app_user would either
+error or (with row_security=on) silently dump only one org's rows. A full backup
+must see every tenant. This keeps CLAUDE.md §2 intact: the privileged credential
+is only ever mounted on short-lived Jobs (this one and the migration Job), never
+on the long-running api/worker, which still connect only as app_user.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "pg.fullname" . }}-backup
+  labels:
+    {{- include "pg.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: backup
+            # Admitted to 5432 by this chart's allow-clients NetworkPolicy.
+            {{- toYaml .Values.networkPolicy.allowedClientSelector | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: pg-dump
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              env:
+                - name: PGHOST
+                  value: {{ include "pg.fullname" . }}
+                - name: PGPORT
+                  value: {{ .Values.service.port | quote }}
+                - name: PGUSER
+                  value: {{ .Values.auth.superuser | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.db.name | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "pg.secretName" . }}
+                      key: superuser-password
+                - name: RETENTION_DAYS
+                  value: {{ .Values.backup.retentionDays | quote }}
+              command:
+                - sh
+                - -ec
+                - |
+                  out="/backups/${PGDATABASE}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  # Write to .partial then rename, so a crashed run never leaves
+                  # a truncated file that looks like a good backup.
+                  pg_dump --format=custom --file="${out}.partial"
+                  mv "${out}.partial" "$out"
+                  echo "wrote $out ($(du -h "$out" | cut -f1))"
+                  find /backups -name "${PGDATABASE}-*.dump" -mtime +"$RETENTION_DAYS" -print -delete
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {memory: 256Mi}
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              hostPath:
+                path: {{ .Values.backup.hostPath }}
+                type: Directory
+{{- if .Values.networkPolicy.enabled }}
+---
+# Egress for the backup pod: DNS + Postgres only. Other policies in the
+# namespace (statusflow's allow-dns) may select it for Egress by its part-of
+# label, which flips it to default-deny; this is its path to the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pg.fullname" . }}-backup
+  labels:
+    {{- include "pg.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pg.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,20 +1,24 @@
-# StatusFlow P12 — production overrides for the statusflow chart (k3s on the VPS).
+# StatusFlow — production overrides for the statusflow chart (k3s on the VPS).
+# Argo CD applies this file (deploy/argocd/apps/30-statusflow.yaml). By hand:
 #   helm install statusflow ./deploy/charts/statusflow -n statusflow -f deploy/prod/values-statusflow.yaml
 #
-# Replace <domain> throughout. All secrets come from Sealed Secrets — this file
-# carries NOTHING sensitive.
+# Live target: the shared Hostinger box (deploy/vps/hostinger/README.md), served
+# at https://statusflow.ishaangarg9.com behind the box's Caddy. The secondary
+# domain statusflow.usefulmachines.tech is a 301 at Caddy and never reaches the
+# app, so ONE origin appears below. All secrets come from Sealed Secrets — this
+# file carries NOTHING sensitive.
 
 images:
-  # Where the images live. Either push to a registry (set registry + tags to an
-  # immutable SHA/version), or import tarballs into k3s with
-  #   sudo k3s ctr images import statusflow-<comp>.tar
-  # and reference them by the tag baked at build time. Don't ship :dev to prod.
-  registry: ""          # e.g. ghcr.io/<you>
+  # Built + pushed by .github/workflows/images.yml after CI passes on main. That
+  # workflow rewrites the four `tag:` values below to the immutable sha-<short>
+  # tag it just pushed and commits the bump; Argo CD then syncs it. Don't edit
+  # the tags by hand except to roll back (revert the bump commit instead).
+  registry: ghcr.io/ishaangarg9
   pullPolicy: IfNotPresent
-  api: {repository: statusflow-api, tag: v0.12.0}
-  worker: {repository: statusflow-worker, tag: v0.12.0}
-  web: {repository: statusflow-web, tag: v0.12.0}
-  migrate: {repository: statusflow-migrate, tag: v0.12.0}
+  api: {repository: statusflow-api, tag: pending-ci}
+  worker: {repository: statusflow-worker, tag: pending-ci}
+  web: {repository: statusflow-web, tag: pending-ci}
+  migrate: {repository: statusflow-migrate, tag: pending-ci}
 
 # --- DB wiring: app_user DSN from a Sealed Secret (NOT assembled inline) -----
 db:
@@ -26,35 +30,42 @@ db:
 # --- Non-secret app config ---------------------------------------------------
 config:
   sessionCookieSecure: true              # invariant: true in any real deployment
-  appBaseURL: "https://statusflow.<domain>"
-  resendFrom: "StatusFlow <noreply@<domain>>"
+  appBaseURL: "https://statusflow.ishaangarg9.com"
+  # Resend sending domain is the mail. subdomain (keeps the apex's reputation and
+  # any existing MX untouched). Only used once RESEND_API_KEY is sealed in.
+  resendFrom: "StatusFlow <noreply@mail.ishaangarg9.com>"
   # The api's only upstream is the in-cluster web (BFF) pod, so trust the pod
   # network to derive the real client IP for rate limiting (k3s default pod CIDR
   # is 10.42.0.0/16). Without this the per-IP login limiter is one global bucket.
   trustedProxies: "10.42.0.0/16"
+  # P15 "Live demo": on, with the in-cluster seed Job (below) provisioning the
+  # viewer-only demo account on every sync. Enforcement is the authz matrix.
+  demo:
+    enabled: true
 
 # --- Sensitive app config from a Sealed Secret -------------------------------
 secrets:
   create: false
   existingSecret: statusflow-app         # RESEND_API_KEY, STRIPE_* (empty => inert)
 
-# --- Web (Next.js BFF) -------------------------------------------------------
+# --- Sizing: 2 vCPU / 8 GiB shared with n8n. One replica each; the HPA can add a
+#     second under load. PDBs off: with one replica on one node a minAvailable=1
+#     PDB only blocks node drains (k3s upgrades) without protecting anything.
 web:
-  replicas: 2
-  appOrigin: "https://statusflow.<domain>"   # BFF CSRF origin allow-list
-  hpa: {enabled: true, minReplicas: 2, maxReplicas: 4}
-  pdb: {enabled: true, minAvailable: 1}
+  replicas: 1
+  appOrigin: "https://statusflow.ishaangarg9.com"   # BFF CSRF origin allow-list
+  hpa: {enabled: true, minReplicas: 1, maxReplicas: 2}
+  pdb: {enabled: false}
 
-# --- API ---------------------------------------------------------------------
 api:
-  replicas: 2
-  hpa: {enabled: true, minReplicas: 2, maxReplicas: 4}
-  pdb: {enabled: true, minAvailable: 1}
+  replicas: 1
+  hpa: {enabled: true, minReplicas: 1, maxReplicas: 2}
+  pdb: {enabled: false}
 
 # --- Worker (stays single; claim_due_monitors makes N safe but 1 is plenty) --
 worker:
   replicas: 1
-  pdb: {enabled: true, minAvailable: 0}
+  pdb: {enabled: false}
 
 # --- Migration Job: privileged DSN from a Sealed Secret ----------------------
 migrate:
@@ -62,16 +73,21 @@ migrate:
     create: false
     existingSecret: statusflow-migrate   # key: MIGRATIONS_DATABASE_URL (superuser DSN)
 
-# --- Ingress: Traefik on k3s. TLS terminates at Cloudflare's edge, so the
-#     in-cluster Ingress is plain http (cloudflared -> Traefik -> web). --------
+# --- Demo seed Job (post-sync, app_user, idempotent) -------------------------
+seed:
+  enabled: true
+
+# --- Ingress: k3s Traefik, reached only from Caddy (which terminates TLS), so
+#     the in-cluster Ingress is plain http. -----------------------------------
 ingress:
   enabled: true
   className: traefik
-  host: statusflow.<domain>
+  host: statusflow.ishaangarg9.com
   tls:
     enabled: false
-  # Stripe webhook stays the one public API path (server-to-server, HMAC-signed).
-  exposeApiWebhook: true
+  # Billing is inert (no Stripe keys sealed), so the one public API path stays
+  # off the Ingress. Flip to true together with sealing the STRIPE_* keys.
+  exposeApiWebhook: false
 
 # Worker-egress + default-deny NetworkPolicies on (k3s's CNI enforces them).
 networkPolicy:
@@ -80,6 +96,6 @@ networkPolicy:
   # webhook route) is admitted only from the web BFF pod + kube-system, not from
   # every pod in the cluster.
   ingressControllerNamespace: kube-system
-  # P14: pin the api/worker ops (metrics) ports so only Prometheus in the
-  # `monitoring` namespace may scrape them (not every in-cluster pod).
+  # Ops (metrics) ports admitted only from `monitoring`. No observability stack
+  # runs on this box, so in practice nothing can scrape them — the safe default.
   monitoringNamespace: monitoring
