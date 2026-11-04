@@ -50,24 +50,6 @@ export default async function AccountPage() {
           </Button>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Billing</CardTitle>
-          <CardDescription>
-            Plans and billing are managed per organization, from each
-            organization&apos;s Billing page.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link href="/orgs">Your organizations</Link>
-          </Button>
-          <Button asChild variant="ghost">
-            <Link href="/pricing">View plans</Link>
-          </Button>
-        </CardContent>
-      </Card>
     </main>
   );
 }

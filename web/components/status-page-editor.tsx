@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { qk } from "@/lib/query-keys";
 import type { StatusPage } from "@/lib/types";
 import { useCan } from "@/components/can";
+import { ListError } from "@/components/list-error";
 import { MonitorPicker } from "@/components/monitor-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,16 +35,33 @@ export function StatusPageEditor({
   orgId: string;
   statusPageId: string;
 }) {
-  const { data: pages, isLoading } = useQuery({
+  const { data: pages, isLoading, isError, refetch } = useQuery({
     queryKey: qk.statusPages(orgId),
     queryFn: () => api.listStatusPages(orgId),
   });
   const page = pages?.find((p) => p.id === statusPageId);
 
+  const back = {
+    href: `/orgs/${orgId}/status-pages`,
+    label: "Back to status pages",
+  };
   if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isError) {
+    return (
+      <ListError
+        message="Couldn't load this status page."
+        onRetry={refetch}
+        back={back}
+      />
+    );
+  }
   if (!page) {
     return (
-      <p className="text-sm text-muted-foreground">Status page not found.</p>
+      <ListError
+        message="Status page not found."
+        detail="It may have been deleted, or the link is wrong."
+        back={back}
+      />
     );
   }
 

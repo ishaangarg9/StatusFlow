@@ -10,6 +10,7 @@ import { qk } from "@/lib/query-keys";
 import { formatDateTime } from "@/lib/utils";
 import { Can } from "@/components/can";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DetailError } from "@/components/list-error";
 import { MonitorForm } from "@/components/forms/monitor-form";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,7 @@ export function MonitorDetail({
   const router = useRouter();
   const qc = useQueryClient();
 
-  const { data: monitor, isLoading } = useQuery({
+  const { data: monitor, isLoading, error, refetch } = useQuery({
     queryKey: qk.monitor(orgId, monitorId),
     queryFn: () => api.getMonitor(orgId, monitorId),
   });
@@ -62,8 +63,16 @@ export function MonitorDetail({
     onError: (e) => toast.error(errorMessage(e)),
   });
 
-  if (isLoading || !monitor) {
-    return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (!monitor) {
+    return (
+      <DetailError
+        error={error}
+        noun="Monitor"
+        onRetry={refetch}
+        back={{ href: `/orgs/${orgId}/monitors`, label: "Back to monitors" }}
+      />
+    );
   }
 
   const latest = checks?.[0];
