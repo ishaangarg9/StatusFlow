@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: statusflow-db
+  namespace: statusflow
+spec:
+  encryptedData:
+    DATABASE_URL: AgAAecH+4oXKewjdUMSBeUmqOETot8ifnf7txa2Kn4heC4E2gEmhwH2vBJbyj1PHCxVmIAzD5OpusR9ucZY6sSLsR/yl/7jJYdd2Vfom1oD0RWIDN3RpFSZ6YPJgV0MPYGEYcEmNmCBLrzHult9JbnUkqOKlzvn7EEKDG3zx+H2u7iwbEAMb1Y9/8vaNJ1exoNUwhnld59kE16zGeru6EtezK5s3WwLG0bvsVtVeNwkq9/uvW2smqWrhBzi53NIeN/pKlxr8F7fePShWItlW4FiGzTPhs5dQdLdiQaex+vmx2cIXzVYy9yTUa//5o8nloABIDuz3KDE6phMxTicE4L02cdwcQ7JZZMkgOOExDDNQWKTir592xWS68hEFPmANFP2jxSd+6tiLqlZwE6y/d6nGwW+cmaKJ/yr1hc/p119t/ZZB78bLflIxphvc5Pv4MQvATmh8lwnTnVMjuIXzLqi7hl7RxV/FtQZ09UG8U5x3VQJVWmQTuBt1DR8q0VURaRTU26XR4PDiI9J3yne3hGs0Wiur+SRdSpMIrG8UL16CYo7wqI/xsWUunnpCcQSvJbBFdJNgAN+y/gj/j4LnpyUC1mcB+xZUYCgQeHAnPjQ0waky0Icp007e9+2h7Y3ElnQ4MuEpVsK/WubaaPkCq3wL8CjvKz5oDXEt0bmzvo09FErD8VWy6A8WSbdN6fkNJ8X8LQkaymQ5eHYQUIe2j63/SWtqWcVqGBTjV9s4ny6bL0YIn0//Iqp9OdEq9NKdpD61y4RWKloE+rXw8Ri50GoeXCBRNS+Y+FL3Tu7G7uOQUffjrBupnfWvGVIVQLQ0VqIepQeWMHCXesOtxXNFofNv
+  template:
+    metadata:
+      name: statusflow-db
+      namespace: statusflow

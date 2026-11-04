@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: statusflow-migrate
+  namespace: statusflow
+spec:
+  encryptedData:
+    MIGRATIONS_DATABASE_URL: AgAgd8r3QFcj2QI7xVVlpPw0Zk/AJYkj/OWZAUo4DA5Deotri5ZGnOEqmVKw9KVgPXKiKutRcP3XDbe3rDRW15ZLjYO0Aa5GMfvsIqK7XkimX0BT3pE9GQtCVW7+o8xzpUFWvNcW8PihbkcwcII6rHivAgkytryAX1PmKdTOeUwGAn3uq4/0lAFEpSwcFsdv6xauOCZiVellQDLM7OpZUcmzoZyRqShb09uB9l8BnKvwVeNT36eDnIGE92G32PX9jbIiFIuRoqF20Fz+CezTp3hY5fndyPpHy7hxTFAcaHQh/Xl4xrKDdjQztCQzwn92mQyl+7xwT3R54L08beRCnC4MVjFeICjD2otM+z5fEoZlD4ujI/h7GOUZ6i3qtIvdlGzaTRnwwlvJcHpwLT2cKkQVKEhZntgWc03QAkzx9k5IKDe5/V6YxVYFr28i0p2YX9DqU+gG+DfCWHg/tQOwhGSJ34sxLyAt2oDXwawPdQdYNhXd4Gis+IhBmxysPNglD6saV806yG+1FJlfAkUsAoq4nSrEg92ag8DlAAr1Cx1++gkKw+VE2xdjBtaAekj/qSWPuKboR4RYHdvwytIDKqJ+Zv4mdUAZEIO/3icG46/q9BRp61dhHMDdj+WMaKPuM6TixIEpPn3zUYg3wNnbuA27dpEYs4q71ryAdQeeiTtgSEspWqxlXvWc9W8IsVc0qWfHdXSmVATHYUUcaU4h1QiEhxAIlaQZYILKCthNpgjjF4MvncueVyiofuNkgoQe5nH74s1WJ3rZO700favmIAaFURqGm7l1TFNVTCifqVxUHMpvW5o6REvSeduHwiFWPuRE8s7+N23jnIDOJPWIgiDq
+  template:
+    metadata:
+      name: statusflow-migrate
+      namespace: statusflow
